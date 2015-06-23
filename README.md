@@ -1,1 +1,3 @@
-# percy-hub
+# Percy::Hub
+
+The master coordinator.

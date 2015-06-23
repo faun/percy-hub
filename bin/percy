@@ -1,0 +1,5 @@
+#!/usr/bin/env ruby
+
+require 'percy/hub'
+
+Percy::Hub.new.run
