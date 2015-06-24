@@ -1,5 +1,4 @@
 require 'percy/hub'
-require 'webmock/rspec'
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
@@ -24,4 +23,8 @@ RSpec.configure do |config|
   # test failures related to randomization by passing the same `--seed` value
   # as the one that triggered the failure.
   Kernel.srand config.seed
+
+  # Use DB #7 for test data and flush before each test run.
+  config.before(:all) { ENV['REDIS_DB'] = '7' }
+  config.before(:each) { Percy::Hub.new.redis_client.flushdb }
 end
