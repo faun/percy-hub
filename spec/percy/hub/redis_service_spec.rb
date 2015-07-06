@@ -3,14 +3,13 @@ RSpec.describe Percy::Hub::RedisService do
 
   describe '#build_key' do
     it 'works for all valid keys' do
-      expect(hub.build_key(:worker, 1, :lock)).to eq('worker:1:lock')
-      expect(hub.build_key(:worker, 1, :jobs)).to eq('worker:1:jobs')
-      expect(hub.build_key(:worker, 1, :idle)).to eq('worker:1:idle')
-      expect(hub.build_key(:worker, 1, :keepalive_lock)).to eq('worker:1:keepalive_lock')
-      expect(hub.build_key(:worker, 1, :last_finished_at)).to eq('worker:1:last_finished_at')
+      expect(hub.build_key('builds:active')).to eq('builds:active')
+      expect(hub.build_key(:build, 234, :subscription_id)).to eq('build:234:subscription_id')
+      expect(hub.build_key(:build, 234, :jobs)).to eq('build:234:jobs')
+      expect(hub.build_key('jobs:created:counter')).to eq('jobs:created:counter')
     end
     it 'fails for any other key' do
-      expect { hub.build_key(:worker, 1, :fake) }.to raise_error(ArgumentError)
+      expect { hub.build_key(:worker, 1, :fake) }.to raise_error(NotImplementedError)
     end
   end
 end

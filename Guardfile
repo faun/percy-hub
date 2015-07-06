@@ -11,4 +11,9 @@ guard :rspec, cmd: 'bundle exec rspec' do
   # Ruby files
   ruby = dsl.ruby
   dsl.watch_spec_files_for(ruby.lib_files)
+
+  # Custom watchers.
+  watch(%r{^lib/percy/hub/scripts/(.+)\.lua$}) do |m|
+    "spec/percy/hub_spec.rb"
+  end
 end
