@@ -22,10 +22,8 @@ local score = redis.call('ZSCORE', builds_active_key, build_id) or now
 -- Add the build to builds:active.
 redis.call('ZADD', builds_active_key, score, build_id)
 
--- Make sure the build subscription ID is set and self destructs in one week, after we're sure the
--- build has finished or failed.
+-- Set the build subscription ID.
 redis.call('SET', build_subscription_id_key, subscription_id)
-redis.call('EXPIRE', build_subscription_id_key, 604800)
 
 -- Add the job to the sorted set of build jobs.
 -- Score of 0 means the job has not been queued or scheduled yet.

@@ -10,7 +10,6 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
       expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
-      expect(hub.redis.ttl('build:234:subscription_id').to_i).to be > 600000
       expect(hub.redis.lindex('build:234:jobs:new', -1)).to eq('process_snapshot:123')
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
@@ -27,6 +26,36 @@ RSpec.describe Percy::Hub do
       hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(2)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
+    end
+  end
+  describe '#_enqueue_jobs' do
+    let(:machine_id) { hub.start_machine }
+    before(:each) do
+      hub._set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      hub._set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      hub._set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      hub._set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+    end
+
+    it 'enqueues all jobs if enough idle workers and subscription locks' do
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
+
+      # Returns 0, indicating no sleep time before next run.
+      expect(hub._enqueue_jobs).to eq(0)
+
+      expect(hub.redis.llen('jobs:runnable')).to eq(2)
+    end
+    it 'enqueues jobs from multiple builds if enough idle workers and subscription locks' do
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
+      hub.insert_snapshot_job(snapshot_id: 130, build_id: 235, subscription_id: 346)
+      hub.insert_snapshot_job(snapshot_id: 131, build_id: 235, subscription_id: 346)
+
+      # Returns 0, indicating no sleep time before next run.
+      expect(hub._enqueue_jobs).to eq(0)
+
+      expect(hub.redis.llen('jobs:runnable')).to eq(4)
     end
   end
   describe '#_enqueue_next_job' do

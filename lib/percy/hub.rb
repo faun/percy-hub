@@ -10,6 +10,10 @@ module Percy
   class Hub
     include Percy::Hub::RedisService
 
+    # NOTE: many of the algorithms below rely on Lua scripts, not for convenience, but because
+    # Lua scripts are executed atomically and serially block all Redis operations, so we can treat
+    # each script as being its own "transaction".
+
     def run
       Percy.logger.warn('WARN test')
 
@@ -42,8 +46,16 @@ module Percy
         ]
 
         num_total_jobs = _run_script('insert_snapshot_job.lua', keys: keys, argv: args)
-        stats.gauge('hub.jobs.created', num_total_jobs)
+        stats.gauge('hub.jobs.created.alltime', num_total_jobs)
         num_total_jobs
+      end
+    end
+
+    def enqueue_jobs
+      while true do
+        sleeptime = _enqueue_jobs
+        stats.count('hub.jobs.enqueuing.sleeptime', sleeptime)
+        sleep sleeptime
       end
     end
 
@@ -74,23 +86,55 @@ module Percy
     #
     # This algorithm is run as a hot loop and needs to be as fast as possible, because even if a
     # worker is available jobs won’t be run until this algorithm pushes them into jobs:runnable.
-    def enqueue_jobs
-      while true do
+    def _enqueue_jobs
+      stats.time('hub.methods._enqueue_jobs') do
         num_active_builds = redis.zcard('builds:active')
+
         # Sleep and check again if there are no active builds.
         if num_active_builds == 0
-          sleep 1
-          next
+          return 1
         end
 
-        # If not, all jobs are complete, delete the build ID from builds:active.
-        _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+        index = 0
+        while true do
+          build_id = redis.zrange('builds:active', index, index)[0]
+
+          # We've iterated through all the active builds, immediately run the full algorithm again.
+          return 0 if !build_id
+
+          subscription_id = redis.get("build:#{build_id}:subscription_id")
+
+          # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
+          while true do
+            case _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            when 1
+              # A job was successfully enqueued from this build, there may be more.
+              stats.increment('hub.jobs.enqueued')
+              next
+            when 0
+              # No jobs were available, move on to the next build and trigger cleanup of this build.
+              stats.increment('hub.jobs.enqueuing.skipped.build_empty')
+              index += 1
+              # TODO: trigger build cleanup.
+              break
+            when 'hit_lock_limit'
+              # Concurrency limit hit, move on to the next build.
+              stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
+              index += 1
+              break
+            when 'no_idle_worker'
+              # No idle workers, sleep and restart this algorithm from the beginning. See above.
+              stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
+              return 1
+            end
+          end
+        end
       end
     end
 
     # One step of the above algorithm. Enqueue jobs from a build, constrained by the above limits.
     def _enqueue_next_job(build_id:, subscription_id:)
-      stats.time('hub.methods.enqueue_next_job') do
+      stats.time('hub.methods._enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
           "subscription:#{subscription_id}:locks:limit",
@@ -100,6 +144,10 @@ module Percy
         ]
         _run_script('enqueue_next_job.lua', keys: keys)
       end
+    end
+
+    def cleanup_build
+      # stats.increment('hub.builds.completed.count')
     end
 
     def start_machine
