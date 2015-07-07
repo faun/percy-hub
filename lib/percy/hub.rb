@@ -1,8 +1,8 @@
 require 'pry'
-require 'statsd'
 
 require 'percy/async'
 require 'percy/logger'
+require 'percy/stats'
 require 'percy/hub/version'
 require 'percy/hub/redis_service'
 
@@ -11,30 +11,39 @@ module Percy
     include Percy::Hub::RedisService
 
     def run
-      stats = Percy::Stats.new
+      Percy.logger.warn('WARN test')
+
       binding.pry
 
-      Percy.logger.warn('WARN test')
       Percy::Async.run_periodically(1) do
       end
     end
 
+    def stats
+      @stats ||= Percy::Stats.new
+    end
+
     def insert_snapshot_job(snapshot_id:, build_id:, subscription_id:, inserted_at: nil)
-      keys = [
-        build_key('jobs:created:counter'),
-        build_key('builds:active'),
-        build_key(:build, build_id, :subscription_id),
-        build_key(:build, build_id, :jobs),
-      ]
-      job_data = "process_snapshot:#{snapshot_id}"
-      args = [
-        snapshot_id,
-        build_id,
-        subscription_id,
-        inserted_at || Time.now.to_i,
-        job_data,
-      ]
-      _run_script('insert_snapshot_job.lua', keys: keys, argv: args)
+      stats.time('hub.methods.insert_snapshot_job') do
+        keys = [
+          'jobs:created:counter',
+          'builds:active',
+          "build:#{build_id}:subscription_id",
+          "build:#{build_id}:jobs",
+        ]
+        job_data = "process_snapshot:#{snapshot_id}"
+        args = [
+          snapshot_id,
+          build_id,
+          subscription_id,
+          inserted_at || Time.now.to_i,
+          job_data,
+        ]
+
+        num_total_jobs = _run_script('insert_snapshot_job.lua', keys: keys, argv: args)
+        stats.gauge('hub.jobs.created', num_total_jobs)
+        num_total_jobs
+      end
     end
 
     private def _run_script(name, keys:, argv: nil)

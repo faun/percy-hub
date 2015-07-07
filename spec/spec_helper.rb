@@ -24,6 +24,9 @@ RSpec.configure do |config|
   # as the one that triggered the failure.
   Kernel.srand config.seed
 
+  # Set the PERCY_ENV variable so stat tags are set correctly.
+  config.before(:all) { ENV['PERCY_ENV'] = 'test' }
+
   # Use DB #7 for test data and flush before each test run.
   config.before(:all) { ENV['REDIS_DB'] = '7' }
   config.before(:each) { Percy::Hub.new.redis.flushdb }
