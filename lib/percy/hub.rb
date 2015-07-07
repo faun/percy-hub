@@ -78,25 +78,27 @@ module Percy
       while true do
         num_active_builds = redis.zcard('builds:active')
         # Sleep and check again if there are no active builds.
-        sleep 1 if num_active_builds == 0
+        if num_active_builds == 0
+          sleep 1
+          next
+        end
 
-        _enqueue_jobs
+        # If not, all jobs are complete, delete the build ID from builds:active.
+        _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
       end
     end
 
     # One step of the above algorithm. Enqueue jobs from a build, constrained by the above limits.
-    def _enqueue_jobs_for_build(build_id:, subscription_id:)
-      stats.time('hub.methods.enqueue_jobs_for_build') do
+    def _enqueue_next_job(build_id:, subscription_id:)
+      stats.time('hub.methods.enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:active",
           "jobs:runnable",
+          "workers:idle",
         ]
-        args = [
-        ]
-
-        _run_script('enqueue_jobs_for_build.lua', keys: keys, argv: args)
+        _run_script('enqueue_next_job.lua', keys: keys)
       end
     end
 
@@ -135,7 +137,7 @@ module Percy
       redis.zrem('workers:idle', worker_id)
     end
 
-    private def _run_script(name, keys:, argv: nil)
+    def _run_script(name, keys:, argv: nil)
       script = File.read(File.expand_path("../hub/scripts/#{name}", __FILE__))
       redis.eval(script, keys: keys, argv: argv)
     end
