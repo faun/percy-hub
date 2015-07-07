@@ -10,7 +10,7 @@ local now = ARGV[4]
 local job_data = ARGV[5]
 
 -- Increment the global jobs counter.
-local job_id = redis.call('INCR', jobs_created_counter_key)
+local num_total_jobs = redis.call('INCR', jobs_created_counter_key)
 
 -- The score in builds:active is the first insertion time of build_id into builds:active. If the
 -- build already exists in this sorted set when the next snapshot job is inserted, the score is
@@ -31,4 +31,4 @@ redis.call('EXPIRE', build_subscription_id_key, 604800)
 -- Score of 0 means the job has not been queued or scheduled yet.
 redis.call('ZADD', build_jobs_key, 0, job_data)
 
-return job_id
+return num_total_jobs
