@@ -1,7 +1,7 @@
 local jobs_created_counter_key = KEYS[1]
 local builds_active_key = KEYS[2]
 local build_subscription_id_key = KEYS[3]
-local build_jobs_key = KEYS[4]
+local build_jobs_new_key = KEYS[4]
 
 local snapshot_id = ARGV[1]
 local build_id = ARGV[2]
@@ -29,6 +29,6 @@ redis.call('EXPIRE', build_subscription_id_key, 604800)
 
 -- Add the job to the sorted set of build jobs.
 -- Score of 0 means the job has not been queued or scheduled yet.
-redis.call('ZADD', build_jobs_key, 0, job_data)
+redis.call('LPUSH', build_jobs_new_key, job_data)
 
 return num_total_jobs
