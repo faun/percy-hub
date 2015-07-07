@@ -92,15 +92,18 @@ module Percy
 
         # Sleep and check again if there are no active builds.
         if num_active_builds == 0
-          return 1
+          return 2
         end
 
         index = 0
         while true do
           build_id = redis.zrange('builds:active', index, index)[0]
 
-          # We've iterated through all the active builds, immediately run the full algorithm again.
-          return 0 if !build_id
+          # We've iterated through all the active builds and successfully checked and/or enqueued
+          # available jobs on idle workers. Sleep for a small amount of time before checking again.
+          # This can also be hit if the last active build hit its concurrency limit but there are
+          # idle workers.
+          return 0.5 if !build_id
 
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
@@ -125,6 +128,8 @@ module Percy
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
+
+              # Sleep for this amount of time waiting for a worker before checking again.
               return 1
             end
           end
@@ -139,14 +144,14 @@ module Percy
           "build:#{build_id}:jobs:new",
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:active",
-          "jobs:runnable",
-          "workers:idle",
+          'jobs:runnable',
+          'workers:idle',
         ]
         _run_script('enqueue_next_job.lua', keys: keys)
       end
     end
 
-    def cleanup_build
+    def cleanup_inactive_build
       # stats.increment('hub.builds.completed.count')
     end
 
