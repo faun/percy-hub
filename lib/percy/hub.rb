@@ -51,6 +51,8 @@ module Percy
       end
     end
 
+    # An infinite loop that continuously enqueues jobs in jobs:runnable when workers are idle.
+    # This algorithm enforces subscription concurrency limits.
     def enqueue_jobs
       while true do
         sleeptime = _enqueue_jobs
@@ -59,12 +61,13 @@ module Percy
       end
     end
 
-    # An infinite loop that continuously enqueues jobs in jobs:runnable when workers are idle.
-    # This algorithm enforces subscription concurrency limits.
+    # A single iteration of the enqueue_jobs algorithm which returns the amount of time to sleep
+    # until it should be run again. After running this method, as many jobs as can be enqueued from
+    # all active builds will be enqueued.
     #
-    # Overall algorithm: look at the first builds:active ID and enqueue as many jobs from the build
-    # in to the global jobs:runnable list  as we can, limited by the concurrency limit of the
-    # build's subscription and the number of idle workers available. If the concurrency limit for
+    # Overall algorithm: grab the first builds:active ID and pop as many jobs from the build
+    # in to the global jobs:runnable list as we can, limited by the concurrency limit of the
+    # build's subscription AND by the number of idle workers available. If the concurrency limit for
     # the subscription is hit, iterate to the next builds:active ID. If there are no idle workers,
     # sleep and restart the algorithm at the beginning.
     #
@@ -78,14 +81,14 @@ module Percy
     #    becomes available, since we restart the algorithm from the beginning if no workers are
     #    available. In a resource-constrained environment when concurrency demands have exceeded
     #    supply and new capacity is still spinning up, this scheduling preference has the desirable
-    #    side-effect of delaying the start of newer builds and giving full capacity to each build
+    #    side-effect of delaying the start of newer builds and giving capacity to each build
     #    once started. We would rather starve builds and have slow-to-start but fast-to-run builds,
     #    instead of uniformly making all builds slower to run. This also helps with the UI, because
     #    we can say something like “Hold on, the build hasn’t started yet.”
     # 3. We can modify scheduling priorities on the fly later.
     #
-    # This algorithm is run as a hot loop and needs to be as fast as possible, because even if a
-    # worker is available jobs won’t be run until this algorithm pushes them into jobs:runnable.
+    # This algorithm needs to be as fast as possible because it is the core algorithm used to
+    # allocate jobs to available capacity while enforcing subscription concurrency limits.
     def _enqueue_jobs
       stats.time('hub.methods._enqueue_jobs') do
         num_active_builds = redis.zcard('builds:active')
@@ -100,9 +103,8 @@ module Percy
           build_id = redis.zrange('builds:active', index, index)[0]
 
           # We've iterated through all the active builds and successfully checked and/or enqueued
-          # available jobs on idle workers. Sleep for a small amount of time before checking again.
-          # This can also be hit if the last active build hit its concurrency limit but there are
-          # idle workers.
+          # all potential jobs on all idle workers. Sleep for a small amount of time before checking
+          # again to see if more locks or idle capacity is available.
           return 0.5 if !build_id
 
           # Grab the subscription associated to this build.
