@@ -14,9 +14,16 @@ module Percy
     # Lua scripts are executed atomically and serially block all Redis operations, so we can treat
     # each script as being its own "transaction".
 
-    def run
-      Percy.logger.info('[hub] Waiting for jobs...')
-      enqueue_jobs
+    def run(command:)
+      case command.to_sym
+      when :queuer
+        Percy.logger.info('[hub] Waiting for jobs to enqueue...')
+        enqueue_jobs
+      when :scheduler
+        schedule_jobs
+      when :insert_test_job
+        insert_snapshot_job(snapshot_id: Random.rand(100), build_id: 234, subscription_id: 345)
+      end
     end
 
     def stats
@@ -26,14 +33,20 @@ module Percy
     # Inserts a new process_snapshot job.
     def insert_snapshot_job(snapshot_id:, build_id:, subscription_id:, inserted_at: nil)
       stats.time('hub.methods.insert_snapshot_job') do
+        # Increment the global jobs counter.
+        job_id = redis.incr('jobs:created:counter')
+
         keys = [
           'jobs:created:counter',
           'builds:active',
           "build:#{build_id}:subscription_id",
           "build:#{build_id}:jobs:new",
+          "job:#{job_id}:data",
+          "job:#{job_id}:subscription_id",
         ]
         job_data = "process_snapshot:#{snapshot_id}"
         args = [
+          job_id,
           snapshot_id,
           build_id,
           subscription_id,
@@ -41,9 +54,11 @@ module Percy
           job_data,
         ]
 
-        num_total_jobs = _run_script('insert_snapshot_job.lua', keys: keys, args: args)
-        stats.gauge('hub.jobs.created.alltime', num_total_jobs)
-        num_total_jobs
+        _run_script('insert_snapshot_job.lua', keys: keys, args: args)
+        stats.gauge('hub.jobs.created.alltime', job_id)
+        Percy.logger.info(
+          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}")
+        job_id
       end
     end
 
@@ -113,6 +128,7 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
+              Percy.logger.info("[hub] Enqueued job from build #{build_id}")
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
@@ -218,7 +234,8 @@ module Percy
     # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
     def _schedule_next_job
       # Block and wait to pop a job from runnable to scheduling.
-      job_data = redis.brpoplpush("jobs:runnable", "jobs:scheduling")
+      Percy.logger.info('[hub] Waiting for jobs to schedule...')
+      job_id = redis.brpoplpush("jobs:runnable", "jobs:scheduling")
 
       # Find an idle worker to schedule the job on.
       worker_id = redis.zrange('workers:idle', 0, 0).first
@@ -239,6 +256,8 @@ module Percy
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
       redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
 
+      Percy.logger.info("[hub] Scheduled job #{job_id} on worker #{worker_id}")
+
       return 0
     end
 
@@ -250,12 +269,34 @@ module Percy
     def wait_for_job(worker_id:)
       result = redis.brpoplpush("worker:#{worker_id}:runnable", "worker:#{worker_id}:running")
       return if !result
-
       # redis.set("worker:#{worker_id}:last")
+
       result
     end
 
-    def _set_worker_idle(worker_id:)
+    def get_job_data(job_id:)
+      redis.get("job:#{job_id}:data")
+    end
+
+    def worker_done(worker_id:)
+      job_id = redis.rpop("worker:#{worker_id}:running")
+      if !job_id
+        return -1
+      end
+
+      # Release the subscription lock that was added by enqueue_jobs.
+      subscription_id = redis.get("job:#{job_id}:subscription_id")
+      redis.decr("subscription:#{subscription_id}:locks:active")
+
+      job_id
+    end
+
+    def delete_job(job_id:)
+      redis.del("job:#{job_id}:data")
+      redis.del("job:#{job_id}:subscription_id")
+    end
+
+    def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
       redis.zadd('workers:idle', machine_id, worker_id)
     end

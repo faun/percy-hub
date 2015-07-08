@@ -2,4 +2,18 @@
 
 require 'percy/hub'
 
-Percy::Hub.new.run
+COMMANDS = [
+  'queuer',
+  'scheduler',
+  'insert_test_job',
+].freeze
+
+if ARGV.length != 1 || !COMMANDS.include?(ARGV[0])
+  puts 'Usage:'
+  puts '  percy-hub <command>'
+  puts
+  puts "  <command>: one of #{COMMANDS.join(', ')}"
+  exit -1
+end
+
+Percy::Hub.new.run(command: ARGV[0])
