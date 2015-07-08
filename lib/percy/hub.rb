@@ -45,7 +45,7 @@ module Percy
           job_data,
         ]
 
-        num_total_jobs = _run_script('insert_snapshot_job.lua', keys: keys, argv: args)
+        num_total_jobs = _run_script('insert_snapshot_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', num_total_jobs)
         num_total_jobs
       end
@@ -105,6 +105,7 @@ module Percy
           # idle workers.
           return 0.5 if !build_id
 
+          # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
@@ -118,7 +119,7 @@ module Percy
               # No jobs were available, move on to the next build and trigger cleanup of this build.
               stats.increment('hub.jobs.enqueuing.skipped.build_empty')
               index += 1
-              # TODO: trigger build cleanup.
+              remove_active_build(build_id: build_id)
               break
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
@@ -151,13 +152,23 @@ module Percy
       end
     end
 
-    def cleanup_inactive_build
-      # stats.increment('hub.builds.completed.count')
+    def remove_active_build(build_id:)
+      stats.time('hub.methods.remove_active_build') do
+        keys = [
+          'builds:active',
+          "build:#{build_id}:subscription_id",
+          "build:#{build_id}:jobs:new"
+        ]
+        args = [
+          build_id,
+        ]
+        _run_script('remove_active_build.lua', keys: keys, args: args) > 0
+      end
     end
 
     def start_machine
       stats.time('hub.methods.start_machine') do
-        machine_id = redis.incr('machines:count')
+        machine_id = redis.incr('machines:counter')
         stats.gauge('hub.machines.started', machine_id)
 
         redis.set("machine:#{machine_id}:started_at", Time.now.to_i)
@@ -168,7 +179,7 @@ module Percy
 
     def register_worker(machine_id:)
       stats.time('hub.methods.register_worker') do
-        worker_id = redis.incr('workers:count')
+        worker_id = redis.incr('workers:counter')
         redis.zadd('workers:online', machine_id, worker_id)
 
         # Record the time between machine creation and worker registration.
@@ -186,13 +197,13 @@ module Percy
       redis.zadd('workers:idle', machine_id, worker_id)
     end
 
-    def _set_worker_running(worker_id:)
+    def _remove_worker_idle(worker_id:)
       redis.zrem('workers:idle', worker_id)
     end
 
-    def _run_script(name, keys:, argv: nil)
+    def _run_script(name, keys:, args: nil)
       script = File.read(File.expand_path("../hub/scripts/#{name}", __FILE__))
-      redis.eval(script, keys: keys, argv: argv)
+      redis.eval(script, keys: keys, argv: args)
     end
   end
 end

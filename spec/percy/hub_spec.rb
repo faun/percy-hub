@@ -63,23 +63,15 @@ RSpec.describe Percy::Hub do
       it 'skips empty builds and cleans up empty active builds' do
         # Insert a job and then enqueue, so we leave a build ID in builds:active.
         hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+        expect(hub.redis.zcard('builds:active')).to eq(1)
         expect(hub._enqueue_jobs).to eq(0.5)
+        expect(hub.redis.zcard('builds:active')).to eq(0)
         expect(hub.redis.llen('jobs:runnable')).to eq(1)
 
-        # Insert a new job from a different build.
-        expect(hub.redis.zcard('builds:active')).to eq(1)
-        hub.insert_snapshot_job(snapshot_id: 130, build_id: 235, subscription_id: 346)
-        expect(hub.redis.zcard('builds:active')).to eq(2)
-
-        # Returns 0.5, indicating completion of all enqueuing.
-        expect(hub._enqueue_jobs).to eq(0.5)
-
-        expect(hub.redis.llen('jobs:runnable')).to eq(2)
-        expect(hub.redis.lrange('jobs:runnable', 0, 1)).to eq([
-          'process_snapshot:130',
+        expect(hub.redis.llen('jobs:runnable')).to eq(1)
+        expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([
           'process_snapshot:123',
         ])
-        # TODO: assert that cleanup_inactive_build is called.
       end
       it 'enforces concurrency limits (default 2 per subscription)' do
         hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
@@ -105,7 +97,7 @@ RSpec.describe Percy::Hub do
       end
     end
     context 'with NO idle workers available' do
-      it 'returns 1 (sleeptime before next run) and does not enqueue jobs' do
+      it 'returns sleeptime 1 and does not enqueue jobs' do
         hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
         expect(hub._enqueue_jobs).to eq(1)
         expect(hub.redis.llen('jobs:runnable')).to eq(0)
@@ -122,7 +114,7 @@ RSpec.describe Percy::Hub do
         expect(hub.redis.llen('jobs:runnable')).to eq(2)
       end
     end
-    it 'returns 2 (sleeptime) if there are no active builds' do
+    it 'returns sleeptime 2 if there are no active builds' do
       expect(hub._enqueue_jobs).to eq(2)
     end
   end
@@ -189,11 +181,38 @@ RSpec.describe Percy::Hub do
       expect(tail_item).to eq('process_snapshot:123')
     end
   end
+  describe '#remove_active_build' do
+    let(:machine_id) { hub.start_machine }
+
+    it 'removes the build from builds:active' do
+      hub._set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub._enqueue_next_job(build_id: 234, subscription_id: 345)
+
+      expect(hub.redis.zscore('builds:active', 234)).to be > 1
+      expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
+
+      expect(hub.remove_active_build(build_id: 234)).to eq(true)
+      expect(hub.redis.zscore('builds:active', 234)).to be_nil
+      expect(hub.redis.get('build:234:subscription_id')).to be_nil
+    end
+    it 'does nothing if build does not exist in builds:active' do
+      expect(hub.remove_active_build(build_id: 234)).to eq(false)
+    end
+    it 'does nothing if build is actually active (has unqueued jobs)' do
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+
+      expect(hub.remove_active_build(build_id: 234)).to eq(false)
+      expect(hub.redis.zscore('builds:active', 234)).to be > 1
+      expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
+    end
+  end
   describe '#start_machine' do
     it 'returns an incrementing id' do
       expect(hub.start_machine).to eq(1)
       expect(hub.start_machine).to eq(2)
       expect(hub.start_machine).to eq(3)
+      expect(hub.redis.get('machines:counter').to_i).to eq(3)
     end
     it 'sets started_at and an expiration' do
       machine_id = hub.start_machine
@@ -207,6 +226,7 @@ RSpec.describe Percy::Hub do
       expect(hub.register_worker(machine_id: machine_id)).to eq(1)
       expect(hub.register_worker(machine_id: machine_id)).to eq(2)
       expect(hub.register_worker(machine_id: machine_id)).to eq(3)
+      expect(hub.redis.get('workers:counter').to_i).to eq(3)
     end
     it 'adds the worker to workers:online and records startup time' do
       expect(hub.stats).to receive(:histogram).once
@@ -219,6 +239,18 @@ RSpec.describe Percy::Hub do
       expect(hub.stats).to_not receive(:histogram)
       hub.redis.del("machine:#{machine_id}:started_at")
       worker_id = hub.register_worker(machine_id: machine_id)
+    end
+  end
+  describe '#_remove_worker_idle and #_set_worker_idle' do
+    it 'adds or removes worker from workers:idle' do
+      machine_id = hub.start_machine
+      worker_id = hub.register_worker(machine_id: machine_id)
+
+      expect(hub.redis.zscore('workers:idle', worker_id)).to be_nil
+      hub._set_worker_idle(worker_id: worker_id)
+      expect(hub.redis.zscore('workers:idle', worker_id)).to eq(machine_id)
+      hub._remove_worker_idle(worker_id: worker_id)
+      expect(hub.redis.zscore('workers:idle', worker_id)).to be_nil
     end
   end
 end
