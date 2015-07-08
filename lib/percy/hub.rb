@@ -15,12 +15,8 @@ module Percy
     # each script as being its own "transaction".
 
     def run
-      Percy.logger.warn('WARN test')
-
-      binding.pry
-
-      Percy::Async.run_periodically(1) do
-      end
+      Percy.logger.info('[hub] Waiting for jobs...')
+      enqueue_jobs
     end
 
     def stats
@@ -51,8 +47,7 @@ module Percy
       end
     end
 
-    # An infinite loop that continuously enqueues jobs in jobs:runnable when workers are idle.
-    # This algorithm enforces subscription concurrency limits.
+    # An infinite loop that continuously enqueues jobs and enforces subscription concurrency limits.
     def enqueue_jobs
       while true do
         sleeptime = _enqueue_jobs
@@ -100,11 +95,11 @@ module Percy
 
         index = 0
         while true do
-          build_id = redis.zrange('builds:active', index, index)[0]
+          build_id = redis.zrange('builds:active', index, index).first
 
           # We've iterated through all the active builds and successfully checked and/or enqueued
-          # all potential jobs on all idle workers. Sleep for a small amount of time before checking
-          # again to see if more locks or idle capacity is available.
+          # all potential jobs for all idle workers. Sleep for a small amount of time before
+          # checking again to see if locks have been released or idle capacity is available.
           return 0.5 if !build_id
 
           # Grab the subscription associated to this build.
@@ -112,9 +107,11 @@ module Percy
 
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
           while true do
-            case _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            case job_result
             when 1
               # A job was successfully enqueued from this build, there may be more.
+              # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
               next
             when 0
@@ -173,6 +170,8 @@ module Percy
         machine_id = redis.incr('machines:counter')
         stats.gauge('hub.machines.started', machine_id)
 
+        # TODO: actually start machine.
+
         redis.set("machine:#{machine_id}:started_at", Time.now.to_i)
         redis.expire("machine:#{machine_id}:started_at", 86400)
         machine_id
@@ -192,6 +191,68 @@ module Percy
 
         worker_id
       end
+    end
+
+    # Schedules jobs from jobs:runnable onto idle workers.
+    #
+    def schedule_jobs
+      while true do
+        sleep _schedule_next_job
+      end
+    end
+
+    # A single iteration of the schedule_jobs algorithm which blocks and waits for a job in
+    # jobs:runnable, then schedules it on an idle worker.
+    #
+    # Preference is given to idle workers with lower machine IDs. The machine-number score ensures
+    # that we preference scheduling to idle workers on the oldest machines, so when demand lessens
+    # newer machines will become more uniformly idle and be able to be shutdown. If we simply picked
+    # a random available worker from any machine, we could easily keep triggering many machines to
+    # stay up for a limited demand.
+    #
+    # This preference will not have adverse effects on utilization since workers can only have one
+    # job at a time, so load will evenly spread over all the workers and then block. If there are
+    # enough jobs being pumped into jobs:runnable, all workers on all machines will be utilized
+    # at maximum, but when load slows workers will become idle from newest to oldest.
+    #
+    # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
+    def _schedule_next_job
+      # Block and wait to pop a job from runnable to scheduling.
+      job_data = redis.brpoplpush("jobs:runnable", "jobs:scheduling")
+
+      # Find an idle worker to schedule the job on.
+      worker_id = redis.zrange('workers:idle', 0, 0).first
+      if !worker_id
+        # There are no idle workers. This should not happen because enqueue_jobs should ensure
+        # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
+        # the case here by sleeping for 1 second and retrying.
+        #
+        # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
+        # jobs:runnable list, but that isn't terrible.
+        redis.rpoplpush("jobs:scheduling", "jobs:runnable")
+        return 1
+      end
+
+      # Immediately remove the worker from the idle list.
+      _remove_worker_idle(worker_id: worker_id)
+
+      # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
+      redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
+
+      return 0
+    end
+
+    # Block and wait for the next runnable job for a specific worker.
+    #
+    # @return [nil, String]
+    #   - `nil` when the operation timed out
+    #   - the job data otherwise
+    def wait_for_job(worker_id:)
+      result = redis.brpoplpush("worker:#{worker_id}:runnable", "worker:#{worker_id}:running")
+      return if !result
+
+      # redis.set("worker:#{worker_id}:last")
+      result
     end
 
     def _set_worker_idle(worker_id:)
