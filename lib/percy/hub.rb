@@ -22,7 +22,20 @@ module Percy
       when :scheduler
         schedule_jobs
       when :insert_test_job
-        insert_snapshot_job(snapshot_id: Random.rand(100), build_id: 234, subscription_id: 345)
+        subscription_id = Random.rand(1..2)
+        case subscription_id
+        when 1
+          snapshot_id = Random.rand(1..1000)
+          build_id = Random.rand(1..3)
+        when 2
+          build_id = Random.rand(10..13)
+          snapshot_id = Random.rand(1001..2000)
+        end
+        insert_snapshot_job(
+          snapshot_id: snapshot_id,
+          build_id: build_id,
+          subscription_id: subscription_id,
+        )
       end
     end
 
@@ -34,10 +47,10 @@ module Percy
     def insert_snapshot_job(snapshot_id:, build_id:, subscription_id:, inserted_at: nil)
       stats.time('hub.methods.insert_snapshot_job') do
         # Increment the global jobs counter.
-        job_id = redis.incr('jobs:created:counter')
+        job_id = redis.incr('jobs:counter')
 
         keys = [
-          'jobs:created:counter',
+          'jobs:counter',
           'builds:active',
           "build:#{build_id}:subscription_id",
           "build:#{build_id}:jobs:new",
@@ -57,7 +70,7 @@ module Percy
         _run_script('insert_snapshot_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', job_id)
         Percy.logger.info(
-          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}")
+          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}, subscription #{subscription_id}")
         job_id
       end
     end
@@ -139,11 +152,13 @@ module Percy
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
+              Percy.logger.info("[hub] Concurrency limit hit, skipping jobs from #{build_id}.")
               index += 1
               break
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
+              Percy.logger.info("[hub] Could not enqueue jobs, no idle workers available.")
 
               # Sleep for this amount of time waiting for a worker before checking again.
               return 1
@@ -169,6 +184,7 @@ module Percy
 
     def remove_active_build(build_id:)
       stats.time('hub.methods.remove_active_build') do
+        Percy.logger.info("[hub] Removing build #{build_id}.")
         keys = [
           'builds:active',
           "build:#{build_id}:subscription_id",

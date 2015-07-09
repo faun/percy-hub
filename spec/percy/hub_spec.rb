@@ -4,11 +4,11 @@ RSpec.describe Percy::Hub do
 
   describe '#insert_snapshot_job' do
     it 'inserts a snapshot job and updates relevant keys' do
-      expect(hub.redis.get('jobs:created:counter')).to be_nil
+      expect(hub.redis.get('jobs:counter')).to be_nil
 
       result = hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
       expect(result).to eq(1)
-      expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
+      expect(hub.redis.get('jobs:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
       expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
       expect(hub.redis.lrange('build:234:jobs:new', 0, 10)).to eq(['1'])
@@ -17,18 +17,18 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
-      expect(hub.redis.get('jobs:created:counter')).to be_nil
+      expect(hub.redis.get('jobs:counter')).to be_nil
       hub.insert_snapshot_job(
         snapshot_id: 123,
         build_id: 234,
         subscription_id: 345,
         inserted_at: 20000,
       )
-      expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
+      expect(hub.redis.get('jobs:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
 
       hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-      expect(hub.redis.get('jobs:created:counter').to_i).to eq(2)
+      expect(hub.redis.get('jobs:counter').to_i).to eq(2)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
     end
   end
@@ -97,15 +97,15 @@ RSpec.describe Percy::Hub do
         expect(hub._enqueue_jobs).to eq(1)
         expect(hub.redis.llen('jobs:runnable')).to eq(0)
       end
-      it 'performs idle worker check first, before concurrency limit check, to avoid spinning' do
+      it 'performs lock count check first before idle worker check' do
         hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
         hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
         hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
         hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
         hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
 
-        # This magic "1" indicates the no_idle_worker sleeptime path.
-        expect(hub._enqueue_jobs).to eq(1)
+        # This magic "0.5" indicates the hit_lock_limit sleeptime path.
+        expect(hub._enqueue_jobs).to eq(0.5)
         expect(hub.redis.llen('jobs:runnable')).to eq(2)
       end
     end
