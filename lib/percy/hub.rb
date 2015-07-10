@@ -214,6 +214,7 @@ module Percy
       stats.time('hub.methods.register_worker') do
         worker_id = redis.incr('workers:counter')
         redis.zadd('workers:online', machine_id, worker_id)
+        _record_worker_stats
 
         # Record the time between machine creation and worker registration.
         started_at = redis.get("machine:#{machine_id}:started_at")
@@ -225,11 +226,24 @@ module Percy
       end
     end
 
-    # Cleans up worker keys. Should be called when worker is shutdown.
-    def cleanup_worker(worker_id:)
-      stats.time('hub.methods.cleanup_worker') do
-        _clear_worker_idle(worker_id: worker_id)
-        redis.zrem('workers:online', worker_id)
+    # Removes a worker and associated keys, and pushes any orphaned jobs into jobs:orphaned.
+    # Should be called when worker is shutdown.
+    def remove_worker(worker_id:)
+      stats.time('hub.methods.remove_worker') do
+        Percy.logger.info("[hub] Removing worker #{worker_id}.")
+        keys = [
+          'workers:online',
+          'workers:idle',
+          "worker:#{worker_id}:runnable",
+          "worker:#{worker_id}:running",
+          'jobs:orphaned',
+        ]
+        args = [
+          worker_id,
+        ]
+        result = _run_script('remove_worker.lua', keys: keys, args: args)
+        _record_worker_stats
+        result
       end
     end
 
@@ -269,7 +283,7 @@ module Percy
         # the case here by sleeping for 1 second and retrying.
         #
         # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
-        # jobs:runnable list, but that isn't terrible.
+        # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
         redis.rpoplpush("jobs:scheduling", "jobs:runnable")
         return 1
       end
@@ -317,12 +331,15 @@ module Percy
       subscription_id = redis.get("job:#{job_id}:subscription_id")
       redis.decr("subscription:#{subscription_id}:locks:active")
 
+      stats.increment('hub.jobs.completed')
       job_id
     end
 
     def cleanup_job(job_id:)
-      redis.del("job:#{job_id}:data")
-      redis.del("job:#{job_id}:subscription_id")
+      stats.time('hub.methods.cleanup_job') do
+        redis.del("job:#{job_id}:data")
+        redis.del("job:#{job_id}:subscription_id")
+      end
     end
 
     def set_worker_idle(worker_id:)

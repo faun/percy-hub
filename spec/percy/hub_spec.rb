@@ -235,16 +235,43 @@ RSpec.describe Percy::Hub do
       worker_id = hub.register_worker(machine_id: machine_id)
     end
   end
-  describe '#cleanup_worker' do
+  describe '#remove_worker' do
     it 'removes worker related keys' do
       worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:online', worker_id)).to be
       expect(hub.redis.zscore('workers:idle', worker_id)).to be
 
-      hub.cleanup_worker(worker_id: worker_id)
+      hub.remove_worker(worker_id: worker_id)
       expect(hub.redis.zscore('workers:online', worker_id)).to_not be
       expect(hub.redis.zscore('workers:idle', worker_id)).to_not be
+    end
+    it 'pushes orphaned jobs from worker:<id>:runnable into jobs:orphaned' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+
+      expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 10)).to eq(['1'])
+      expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq([])
+      hub.remove_worker(worker_id: worker_id)
+      expect(hub.redis.exists("worker:#{worker_id}:running")).to eq(false)
+      expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq(['1'])
+    end
+    it 'pushes orphaned jobs from worker:<id>:running into jobs:orphaned' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+      hub.wait_for_job(worker_id: worker_id)
+
+      expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 10)).to eq(['1'])
+      expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq([])
+      hub.remove_worker(worker_id: worker_id)
+      expect(hub.redis.exists("worker:#{worker_id}:running")).to eq(false)
+      expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq(['1'])
     end
   end
   describe '#_schedule_next_job' do
@@ -315,6 +342,11 @@ RSpec.describe Percy::Hub do
     it 'returns -1 if no job was running' do
       expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
     end
+    it 'records stats if successful' do
+      expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original
+      expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
+      hub.worker_job_complete(worker_id: worker_id)
+    end
   end
   describe '#cleanup_job' do
     it 'removes job related keys' do
@@ -349,8 +381,10 @@ RSpec.describe Percy::Hub do
     it 'records the number of workers online and idle (2)' do
       machine_id = hub.start_machine
 
-      # set_worker_idle below also calls _record_worker_stats, so stats are recorded twice.
-      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.online', 2)
+      # Other methods below also call _record_worker_stats, so stats are recorded multiple times.
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 1)
+      expect(hub.stats).to receive(:gauge).thrice.with('hub.workers.online', 2)
+      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.idle', 0)
       expect(hub.stats).to receive(:gauge).twice.with('hub.workers.idle', 1)
 
       hub.register_worker(machine_id: machine_id)
@@ -359,4 +393,3 @@ RSpec.describe Percy::Hub do
     end
   end
 end
-
