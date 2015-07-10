@@ -373,22 +373,23 @@ RSpec.describe Percy::Hub do
     end
   end
   describe '#_record_worker_stats' do
-    it 'records the number of workers online and idle (0)' do
+    it 'records the number of workers online (0) and idle (0)' do
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 0)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 0)
       hub._record_worker_stats
     end
-    it 'records the number of workers online and idle (2)' do
-      machine_id = hub.start_machine
-
-      # Other methods below also call _record_worker_stats, so stats are recorded multiple times.
+    it 'records the number of workers online (1) and idle (0)' do
+      hub.register_worker(machine_id: machine_id)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 1)
-      expect(hub.stats).to receive(:gauge).thrice.with('hub.workers.online', 2)
-      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.idle', 0)
-      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.idle', 1)
-
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 0)
+      hub._record_worker_stats
+    end
+    it 'records the number of workers online (2) and idle (1)' do
       hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 2)
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 1)
       hub._record_worker_stats
     end
   end
