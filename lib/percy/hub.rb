@@ -218,10 +218,18 @@ module Percy
         # Record the time between machine creation and worker registration.
         started_at = redis.get("machine:#{machine_id}:started_at")
         if started_at
-          stats.histogram('hub.worker.startup_time', Time.now.to_i - started_at.to_i)
+          stats.histogram('hub.workers.startup_time', Time.now.to_i - started_at.to_i)
         end
 
         worker_id
+      end
+    end
+
+    # Cleans up worker keys. Should be called when worker is shutdown.
+    def cleanup_worker(worker_id:)
+      stats.time('hub.methods.cleanup_worker') do
+        _clear_worker_idle(worker_id: worker_id)
+        redis.zrem('workers:online', worker_id)
       end
     end
 
@@ -267,7 +275,7 @@ module Percy
       end
 
       # Immediately remove the worker from the idle list.
-      _remove_worker_idle(worker_id: worker_id)
+      _clear_worker_idle(worker_id: worker_id)
 
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
       redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
@@ -294,7 +302,12 @@ module Percy
       redis.get("job:#{job_id}:data")
     end
 
-    def worker_done(worker_id:)
+    # Marks the worker's current job as complete and releases the subscription lock.
+    #
+    # @return [Integer]
+    #   - `-1` when there was no job to mark complete
+    #   - the job ID otherwise
+    def worker_job_complete(worker_id:)
       job_id = redis.rpop("worker:#{worker_id}:running")
       if !job_id
         return -1
@@ -307,7 +320,7 @@ module Percy
       job_id
     end
 
-    def delete_job(job_id:)
+    def cleanup_job(job_id:)
       redis.del("job:#{job_id}:data")
       redis.del("job:#{job_id}:subscription_id")
     end
@@ -315,10 +328,19 @@ module Percy
     def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
       redis.zadd('workers:idle', machine_id, worker_id)
+      _record_worker_stats
     end
 
-    def _remove_worker_idle(worker_id:)
+    def _clear_worker_idle(worker_id:)
       redis.zrem('workers:idle', worker_id)
+      _record_worker_stats
+    end
+
+    def _record_worker_stats
+      # Record an exact count of how many workers are online and idle.
+      stats.gauge('hub.workers.online', redis.zcard('workers:online'))
+      stats.gauge('hub.workers.idle', redis.zcard('workers:idle'))
+      true
     end
 
     def _run_script(name, keys:, args: nil)

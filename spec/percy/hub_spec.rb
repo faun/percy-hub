@@ -201,6 +201,9 @@ RSpec.describe Percy::Hub do
   end
   describe '#start_machine' do
     it 'returns an incrementing id' do
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 1)
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 2)
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 3)
       expect(hub.start_machine).to eq(1)
       expect(hub.start_machine).to eq(2)
       expect(hub.start_machine).to eq(3)
@@ -221,7 +224,7 @@ RSpec.describe Percy::Hub do
     end
     it 'adds the worker to workers:online and records startup time' do
       expect(hub.stats).to receive(:histogram).once
-        .with('hub.worker.startup_time', kind_of(Numeric)).and_call_original
+        .with('hub.workers.startup_time', kind_of(Numeric)).and_call_original
 
       worker_id = hub.register_worker(machine_id: machine_id)
       expect(hub.redis.zscore('workers:online', worker_id)).to eq(machine_id)
@@ -230,6 +233,18 @@ RSpec.describe Percy::Hub do
       expect(hub.stats).to_not receive(:histogram)
       hub.redis.del("machine:#{machine_id}:started_at")
       worker_id = hub.register_worker(machine_id: machine_id)
+    end
+  end
+  describe '#cleanup_worker' do
+    it 'removes worker related keys' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      expect(hub.redis.zscore('workers:online', worker_id)).to be
+      expect(hub.redis.zscore('workers:idle', worker_id)).to be
+
+      hub.cleanup_worker(worker_id: worker_id)
+      expect(hub.redis.zscore('workers:online', worker_id)).to_not be
+      expect(hub.redis.zscore('workers:idle', worker_id)).to_not be
     end
   end
   describe '#_schedule_next_job' do
@@ -252,7 +267,7 @@ RSpec.describe Percy::Hub do
       hub.set_worker_idle(worker_id: worker_id)
       hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
-      hub._remove_worker_idle(worker_id: worker_id)
+      hub._clear_worker_idle(worker_id: worker_id)
 
       expect(hub._schedule_next_job).to eq(1)
 
@@ -278,7 +293,7 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.lindex("worker:#{worker_id}:running", 0)).to eq('1')
     end
   end
-  describe '#worker_done' do
+  describe '#worker_job_complete' do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
     before(:each) do
       hub.set_worker_idle(worker_id: worker_id)
@@ -289,29 +304,29 @@ RSpec.describe Percy::Hub do
     end
     it 'removes the job from the worker:<id>:running queue' do
       expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 10)).to eq(['1'])
-      hub.worker_done(worker_id: worker_id)
+      hub.worker_job_complete(worker_id: worker_id)
       expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 10)).to eq([])
     end
     it 'releases a subscription lock' do
       expect(hub.redis.get('subscription:345:locks:active')).to eq('1')
-      hub.worker_done(worker_id: worker_id)
+      hub.worker_job_complete(worker_id: worker_id)
       expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
     end
     it 'returns -1 if no job was running' do
-      expect(hub.worker_done(worker_id: 999)).to eq(-1)
+      expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
     end
   end
-  describe '#delete_job' do
+  describe '#cleanup_job' do
     it 'removes job related keys' do
       hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
       expect(hub.redis.get('job:1:data')).to be
       expect(hub.redis.get('job:1:subscription_id')).to be
-      hub.delete_job(job_id: 1)
+      hub.cleanup_job(job_id: 1)
       expect(hub.redis.get('job:1:data')).to be_nil
       expect(hub.redis.get('job:1:subscription_id')).to be_nil
     end
   end
-  describe '#_remove_worker_idle and #set_worker_idle' do
+  describe '#_clear_worker_idle and #set_worker_idle' do
     it 'adds or removes worker from workers:idle' do
       machine_id = hub.start_machine
       worker_id = hub.register_worker(machine_id: machine_id)
@@ -321,8 +336,26 @@ RSpec.describe Percy::Hub do
       hub.set_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:idle', worker_id)).to eq(machine_id)
 
-      hub._remove_worker_idle(worker_id: worker_id)
+      hub._clear_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:idle', worker_id)).to be_nil
+    end
+  end
+  describe '#_record_worker_stats' do
+    it 'records the number of workers online and idle (0)' do
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 0)
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 0)
+      hub._record_worker_stats
+    end
+    it 'records the number of workers online and idle (2)' do
+      machine_id = hub.start_machine
+
+      # set_worker_idle below also calls _record_worker_stats, so stats are recorded twice.
+      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.online', 2)
+      expect(hub.stats).to receive(:gauge).twice.with('hub.workers.idle', 1)
+
+      hub.register_worker(machine_id: machine_id)
+      hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      hub._record_worker_stats
     end
   end
 end
