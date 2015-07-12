@@ -10,9 +10,128 @@ module Percy
   class Hub
     include Percy::Hub::RedisService
 
-    # NOTE: many of the algorithms below rely on Lua scripts, not for convenience, but because
-    # Lua scripts are executed atomically and serially block all Redis operations, so we can treat
-    # each script as being its own "transaction".
+    DEFAULT_WORKER_WAIT_SECONDS = 5
+
+    # NOTES:
+    #
+    # - Redis data is in-memory and expensive, so every variable should be strictly accounted for
+    #   and cleaned up when no longer needed.
+    # - Many of the algorithms below rely on Lua scripts, not for convenience, but because
+    #   Lua scripts are executed atomically and serially block all Redis operations, so we can treat
+    #   each script as being its own "transaction".
+    #
+    # REDIS KEYS:
+    #
+    # builds:active [Sorted Set]
+    #
+    # - All the currently active build IDs that should be checked for
+    #   scheduling of their jobs, scored by insertion timestamp. If the build already exists in this
+    #   set when a next snapshot job is inserted, the insertion time score is re-used and remains
+    #   the same. This has the side-effect of keeping active builds that send snapshots quickly at
+    #   the front of the queue. This also means builds are not necessarily executed in order, if a
+    #   build is slow to send snapshots it may not remain at the front of the priority list.
+    # - Items added in insert_snapshot_job.
+    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+    #   The last job is simply the last we've received, not necessarily the last ever for the build.
+    #
+    # subscription:<id>:locks:limit [Integer]
+    #
+    # - The concurrency limit of the subscription. Managed by the API app, not Hub.
+    # - Added by the main app when subscriptions change. Defaults to 2 if not set.
+    # - Never deleted.
+    #
+    # subscription:<id>:locks:active [Integer]
+    #
+    # - The current number of locks in use. This is limited to the subscription concurrency_limit.
+    # - Incremented by enqueue_jobs.
+    # - Decremented by worker_job_complete. Once set, never deleted.
+    #
+    # build:<id>:subscription_id [Integer]
+    #
+    # - Subscription ID so we can get from a build to its subscription limit and active locks.
+    # - Added on every insert_snapshot_job call.
+    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+    #
+    # build:<id>:jobs:new [List]
+    #
+    # - List of jobs that have not been enqueued or run yet.
+    # - Added on every insert_snapshot_job call.
+    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+    #
+    # jobs:created:counter [Integer]
+    #
+    # - An all-time counter of jobs created, used as IDs for jobs.
+    # - Incremented by insert_snapshot_job.
+    # - Never deleted. Limited to 9,223,372,036,854,775,807 jobs, hah!
+    #
+    # jobs:completed:counter [Integer]
+    #
+    # - An all-time counter of jobs completed (without regard to success).
+    # - Incremented on each worker_job_complete call.
+    # - Never deleted.
+    #
+    # jobs:runnable [List]
+    #
+    # - A global list of enqueued job IDs that can and should be immediately scheduled on a worker.
+    #   This list acts as a buffer/interface between enqueuing a job and actually scheduling it to
+    #   run on a specific worker.
+    # - Items added by enqueue_jobs.
+    # - Items popped by schedule_jobs.
+    #
+    # jobs:scheduling [List]
+    #
+    # - An intermediate list of job IDs that are currently being scheduled by schedule_jobs.
+    #   This exists so we can atomically block and pop from jobs:runnable to this list without
+    #   needing to find an idle worker yet, then we immediately pop the job from this list to the
+    #   worker's runnable list.
+    # - Items added by schedule_jobs.
+    # - Items popped by schedule_jobs.
+    #
+    # job:<id>:data [String]
+    #
+    # - Arbitrary job data. Right now just "process_snapshot:<id>".
+    # - Added on every insert_snapshot_job call.
+    # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+    #
+    # job:<id>:subscription_id [Integer]
+    #
+    # - The subscription ID of the build associated to this job.
+    # - Added on every insert_snapshot_job call.
+    # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+    #
+    # workers:created:counter [Integer]
+    #
+    # - The all-time count of workers created.
+    # - Incremented by register_worker.
+    # - Never deleted.
+    #
+    # workers:online [Sorted Set]
+    #
+    # - All the currently online workers, scored by machine ID.
+    # - Items added by register_worker.
+    # - Items deleted by remove_worker.
+    #
+    # workers:idle [Sorted Set]
+    #
+    # - All the currently idle workers, scored by machine ID. Jobs are scheduled on the lowest
+    #   ranked worker that is idle.
+    # - Items added by set_worker_idle (called by the worker).
+    # - Items deleted by schedule_jobs after job is scheduled, and permanently by remove_worker.
+    #
+    # machines:created:counter [Integer]
+    #
+    # - The all-time count of machines created.
+    # - Incremented and used by start_machine.
+    # - Never deleted.
+    #
+    # machine:<id>:started_at [Integer]
+    #
+    # - The time this machine was started. When a worker starts, it uses this to record a histogram
+    #   statistic of how long it took from machine allocation to worker ready.
+    # - Added by start_machine.
+    # - Deleted by setting to EXPIRE 24 hours after being set.
+    #
+    # -----
 
     def run(command:)
       case command.to_sym
@@ -45,12 +164,16 @@ module Percy
 
     # Inserts a new process_snapshot job.
     def insert_snapshot_job(snapshot_id:, build_id:, subscription_id:, inserted_at: nil)
+      # Sanity checks to make sure we don't silently inject nils somewhere.
+      raise ArgumentError.new('snapshot_id is required') if !snapshot_id
+      raise ArgumentError.new('build_id is required') if !build_id
+      raise ArgumentError.new('subscription_id is required') if !subscription_id
+
       stats.time('hub.methods.insert_snapshot_job') do
         # Increment the global jobs counter.
-        job_id = redis.incr('jobs:counter')
+        job_id = redis.incr('jobs:created:counter')
 
         keys = [
-          'jobs:counter',
           'builds:active',
           "build:#{build_id}:subscription_id",
           "build:#{build_id}:jobs:new",
@@ -199,8 +322,8 @@ module Percy
 
     def start_machine
       stats.time('hub.methods.start_machine') do
-        machine_id = redis.incr('machines:counter')
-        stats.gauge('hub.machines.started', machine_id)
+        machine_id = redis.incr('machines:created:counter')
+        stats.gauge('hub.machines.created.alltime', machine_id)
 
         # TODO: actually start machine.
 
@@ -211,8 +334,9 @@ module Percy
     end
 
     def register_worker(machine_id:)
+      raise ArgumentError.new('snapshot_id is required') if !machine_id
       stats.time('hub.methods.register_worker') do
-        worker_id = redis.incr('workers:counter')
+        worker_id = redis.incr('workers:created:counter')
         redis.zadd('workers:online', machine_id, worker_id)
         _record_worker_stats
 
@@ -230,7 +354,6 @@ module Percy
     # Should be called when worker is shutdown.
     def remove_worker(worker_id:)
       stats.time('hub.methods.remove_worker') do
-        Percy.logger.info("[hub] Removing worker #{worker_id}.")
         keys = [
           'workers:online',
           'workers:idle',
@@ -242,6 +365,7 @@ module Percy
           worker_id,
         ]
         result = _run_script('remove_worker.lua', keys: keys, args: args)
+        Percy.logger.info("[hub] Removed worker #{worker_id}.")
         _record_worker_stats
         result
       end
@@ -299,13 +423,15 @@ module Percy
       return 0
     end
 
-    # Block and wait for the next runnable job for a specific worker.
+    # Block and wait until the timeout for the next runnable job for a specific worker.
     #
     # @return [nil, String]
     #   - `nil` when the operation timed out
     #   - the job data otherwise
-    def wait_for_job(worker_id:)
-      result = redis.brpoplpush("worker:#{worker_id}:runnable", "worker:#{worker_id}:running")
+    def wait_for_job(worker_id:, timeout: nil)
+      timeout = timeout || DEFAULT_WORKER_WAIT_SECONDS
+      result = redis.brpoplpush(
+        "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
       return if !result
       # redis.set("worker:#{worker_id}:last")
 
@@ -331,7 +457,13 @@ module Percy
       subscription_id = redis.get("job:#{job_id}:subscription_id")
       redis.decr("subscription:#{subscription_id}:locks:active")
 
+      # Record that we just completed a job.
       stats.increment('hub.jobs.completed')
+
+      # Increment the global jobs completed counter and record the number of alltime completed jobs.
+      completed_counter = redis.incr('jobs:completed:counter')
+      stats.gauge('hub.jobs.completed.alltime', job_id)
+
       job_id
     end
 

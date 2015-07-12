@@ -4,11 +4,11 @@ RSpec.describe Percy::Hub do
 
   describe '#insert_snapshot_job' do
     it 'inserts a snapshot job and updates relevant keys' do
-      expect(hub.redis.get('jobs:counter')).to be_nil
+      expect(hub.redis.get('jobs:created:counter')).to be_nil
 
       result = hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
       expect(result).to eq(1)
-      expect(hub.redis.get('jobs:counter').to_i).to eq(1)
+      expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
       expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
       expect(hub.redis.lrange('build:234:jobs:new', 0, 10)).to eq(['1'])
@@ -17,19 +17,30 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
-      expect(hub.redis.get('jobs:counter')).to be_nil
+      expect(hub.redis.get('jobs:created:counter')).to be_nil
       hub.insert_snapshot_job(
         snapshot_id: 123,
         build_id: 234,
         subscription_id: 345,
         inserted_at: 20000,
       )
-      expect(hub.redis.get('jobs:counter').to_i).to eq(1)
+      expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
 
       hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-      expect(hub.redis.get('jobs:counter').to_i).to eq(2)
+      expect(hub.redis.get('jobs:created:counter').to_i).to eq(2)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
+    end
+    it 'fails if given nil arguments' do
+      expect do
+        hub.insert_snapshot_job(snapshot_id: nil, build_id: 234, subscription_id: 345)
+      end.to raise_error(ArgumentError)
+      expect do
+        hub.insert_snapshot_job(snapshot_id: 123, build_id: nil, subscription_id: 345)
+      end.to raise_error(ArgumentError)
+      expect do
+        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: nil)
+      end.to raise_error(ArgumentError)
     end
   end
   describe '#_enqueue_jobs' do
@@ -201,13 +212,13 @@ RSpec.describe Percy::Hub do
   end
   describe '#start_machine' do
     it 'returns an incrementing id' do
-      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 1)
-      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 2)
-      expect(hub.stats).to receive(:gauge).once.with('hub.machines.started', 3)
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.created.alltime', 1)
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.created.alltime', 2)
+      expect(hub.stats).to receive(:gauge).once.with('hub.machines.created.alltime', 3)
       expect(hub.start_machine).to eq(1)
       expect(hub.start_machine).to eq(2)
       expect(hub.start_machine).to eq(3)
-      expect(hub.redis.get('machines:counter').to_i).to eq(3)
+      expect(hub.redis.get('machines:created:counter').to_i).to eq(3)
     end
     it 'sets started_at and an expiration' do
       machine_id = hub.start_machine
@@ -220,7 +231,7 @@ RSpec.describe Percy::Hub do
       expect(hub.register_worker(machine_id: machine_id)).to eq(1)
       expect(hub.register_worker(machine_id: machine_id)).to eq(2)
       expect(hub.register_worker(machine_id: machine_id)).to eq(3)
-      expect(hub.redis.get('workers:counter').to_i).to eq(3)
+      expect(hub.redis.get('workers:created:counter').to_i).to eq(3)
     end
     it 'adds the worker to workers:online and records startup time' do
       expect(hub.stats).to receive(:histogram).once
@@ -233,6 +244,9 @@ RSpec.describe Percy::Hub do
       expect(hub.stats).to_not receive(:histogram)
       hub.redis.del("machine:#{machine_id}:started_at")
       worker_id = hub.register_worker(machine_id: machine_id)
+    end
+    it 'fails if given nil machine_id' do
+      expect { hub.register_worker(machine_id: nil) }.to raise_error(ArgumentError)
     end
   end
   describe '#remove_worker' do
@@ -319,6 +333,16 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(0)
       expect(hub.redis.lindex("worker:#{worker_id}:running", 0)).to eq('1')
     end
+    it 'waits for timeout seconds if no jobs are available, and returns nil for no jobs' do
+      expect(hub.redis).to receive(:brpoplpush)
+        .with(
+          "worker:#{worker_id}:runnable",
+          "worker:#{worker_id}:running",
+          Percy::Hub::DEFAULT_WORKER_WAIT_SECONDS
+        )
+        .and_return(nil)
+      expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
+    end
   end
   describe '#worker_job_complete' do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
@@ -340,11 +364,13 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
     end
     it 'returns -1 if no job was running' do
+      expect(hub.stats).to_not receive(:increment)
       expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
     end
     it 'records stats if successful' do
       expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original
-      expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
+      expect(hub.stats).to receive(:gauge)
+        .once.with('hub.jobs.completed.alltime', '1').and_call_original
       hub.worker_job_complete(worker_id: worker_id)
     end
   end
