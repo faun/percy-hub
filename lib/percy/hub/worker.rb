@@ -47,7 +47,9 @@ module Percy
           case action
           when :process_snapshot
             options = {snapshot_id: action_id}
-            yield(action, options)
+            hub.stats.time('hub.jobs.completed.process_snapshot') do
+              yield(action, options)
+            end
           else
             raise NotImplementedError.new("Unhandled job type: #{action}")
           end
