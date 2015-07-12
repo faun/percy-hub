@@ -338,7 +338,7 @@ RSpec.describe Percy::Hub do
         .with(
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
-          Percy::Hub::DEFAULT_WORKER_WAIT_SECONDS
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS
         )
         .and_return(nil)
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil

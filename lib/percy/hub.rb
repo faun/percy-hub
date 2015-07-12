@@ -1,3 +1,124 @@
+# Percy Hub
+#
+# NOTES:
+#
+# - Redis data is in-memory and expensive, so every variable should be strictly accounted for
+#   and cleaned up when no longer needed.
+# - Many of the algorithms below rely on Lua scripts, not for convenience, but because
+#   Lua scripts are executed atomically and serially block all Redis operations, so we can treat
+#   each script as being its own "transaction".
+#
+# REDIS KEYS:
+#
+# builds:active [Sorted Set]
+#
+# - All the currently active build IDs that should be checked for
+#   scheduling of their jobs, scored by insertion timestamp. If the build already exists in this
+#   set when a next snapshot job is inserted, the insertion time score is re-used and remains
+#   the same. This has the side-effect of keeping active builds that send snapshots quickly at
+#   the front of the queue. This also means builds are not necessarily executed in order, if a
+#   build is slow to send snapshots it may not remain at the front of the priority list.
+# - Items added in insert_snapshot_job.
+# - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+#   The last job is simply the last we've received, not necessarily the last ever for the build.
+#
+# subscription:<id>:locks:limit [Integer]
+#
+# - The concurrency limit of the subscription. Managed by the API app, not Hub.
+# - Added by the main app when subscriptions change. Defaults to 2 if not set.
+# - Never deleted.
+#
+# subscription:<id>:locks:active [Integer]
+#
+# - The current number of locks in use. This is limited to the subscription concurrency_limit.
+# - Incremented by enqueue_jobs.
+# - Decremented by worker_job_complete. Once set, never deleted.
+#
+# build:<id>:subscription_id [Integer]
+#
+# - Subscription ID so we can get from a build to its subscription limit and active locks.
+# - Added on every insert_snapshot_job call.
+# - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+#
+# build:<id>:jobs:new [List]
+#
+# - List of jobs that have not been enqueued or run yet.
+# - Added on every insert_snapshot_job call.
+# - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
+#
+# jobs:created:counter [Integer]
+#
+# - An all-time counter of jobs created, used as IDs for jobs.
+# - Incremented by insert_snapshot_job.
+# - Never deleted. Limited to 9,223,372,036,854,775,807 jobs, hah!
+#
+# jobs:completed:counter [Integer]
+#
+# - An all-time counter of jobs completed (without regard to success).
+# - Incremented on each worker_job_complete call.
+# - Never deleted.
+#
+# jobs:runnable [List]
+#
+# - A global list of enqueued job IDs that can and should be immediately scheduled on a worker.
+#   This list acts as a buffer/interface between enqueuing a job and actually scheduling it to
+#   run on a specific worker.
+# - Items added by enqueue_jobs.
+# - Items popped by schedule_jobs.
+#
+# jobs:scheduling [List]
+#
+# - An intermediate list of job IDs that are currently being scheduled by schedule_jobs.
+#   This exists so we can atomically block and pop from jobs:runnable to this list without
+#   needing to find an idle worker yet, then we immediately pop the job from this list to the
+#   worker's runnable list.
+# - Items added by schedule_jobs.
+# - Items popped by schedule_jobs.
+#
+# job:<id>:data [String]
+#
+# - Arbitrary job data. Right now just "process_snapshot:<id>".
+# - Added on every insert_snapshot_job call.
+# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+#
+# job:<id>:subscription_id [Integer]
+#
+# - The subscription ID of the build associated to this job.
+# - Added on every insert_snapshot_job call.
+# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+#
+# workers:created:counter [Integer]
+#
+# - The all-time count of workers created.
+# - Incremented by register_worker.
+# - Never deleted.
+#
+# workers:online [Sorted Set]
+#
+# - All the currently online workers, scored by machine ID.
+# - Items added by register_worker.
+# - Items deleted by remove_worker.
+#
+# workers:idle [Sorted Set]
+#
+# - All the currently idle workers, scored by machine ID. Jobs are scheduled on the lowest
+#   ranked worker that is idle.
+# - Items added by set_worker_idle (called by the worker).
+# - Items deleted by schedule_jobs after job is scheduled, and permanently by remove_worker.
+#
+# machines:created:counter [Integer]
+#
+# - The all-time count of machines created.
+# - Incremented and used by start_machine.
+# - Never deleted.
+#
+# machine:<id>:started_at [Integer]
+#
+# - The time this machine was started. When a worker starts, it uses this to record a histogram
+#   statistic of how long it took from machine allocation to worker ready.
+# - Added by start_machine.
+# - Deleted by setting to EXPIRE 24 hours after being set.
+
 require 'pry'
 
 require 'percy/async'
@@ -10,136 +131,25 @@ module Percy
   class Hub
     include Percy::Hub::RedisService
 
-    DEFAULT_WORKER_WAIT_SECONDS = 5
+    DEFAULT_TIMEOUT_SECONDS = 5
 
-    # NOTES:
-    #
-    # - Redis data is in-memory and expensive, so every variable should be strictly accounted for
-    #   and cleaned up when no longer needed.
-    # - Many of the algorithms below rely on Lua scripts, not for convenience, but because
-    #   Lua scripts are executed atomically and serially block all Redis operations, so we can treat
-    #   each script as being its own "transaction".
-    #
-    # REDIS KEYS:
-    #
-    # builds:active [Sorted Set]
-    #
-    # - All the currently active build IDs that should be checked for
-    #   scheduling of their jobs, scored by insertion timestamp. If the build already exists in this
-    #   set when a next snapshot job is inserted, the insertion time score is re-used and remains
-    #   the same. This has the side-effect of keeping active builds that send snapshots quickly at
-    #   the front of the queue. This also means builds are not necessarily executed in order, if a
-    #   build is slow to send snapshots it may not remain at the front of the priority list.
-    # - Items added in insert_snapshot_job.
-    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
-    #   The last job is simply the last we've received, not necessarily the last ever for the build.
-    #
-    # subscription:<id>:locks:limit [Integer]
-    #
-    # - The concurrency limit of the subscription. Managed by the API app, not Hub.
-    # - Added by the main app when subscriptions change. Defaults to 2 if not set.
-    # - Never deleted.
-    #
-    # subscription:<id>:locks:active [Integer]
-    #
-    # - The current number of locks in use. This is limited to the subscription concurrency_limit.
-    # - Incremented by enqueue_jobs.
-    # - Decremented by worker_job_complete. Once set, never deleted.
-    #
-    # build:<id>:subscription_id [Integer]
-    #
-    # - Subscription ID so we can get from a build to its subscription limit and active locks.
-    # - Added on every insert_snapshot_job call.
-    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
-    #
-    # build:<id>:jobs:new [List]
-    #
-    # - List of jobs that have not been enqueued or run yet.
-    # - Added on every insert_snapshot_job call.
-    # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
-    #
-    # jobs:created:counter [Integer]
-    #
-    # - An all-time counter of jobs created, used as IDs for jobs.
-    # - Incremented by insert_snapshot_job.
-    # - Never deleted. Limited to 9,223,372,036,854,775,807 jobs, hah!
-    #
-    # jobs:completed:counter [Integer]
-    #
-    # - An all-time counter of jobs completed (without regard to success).
-    # - Incremented on each worker_job_complete call.
-    # - Never deleted.
-    #
-    # jobs:runnable [List]
-    #
-    # - A global list of enqueued job IDs that can and should be immediately scheduled on a worker.
-    #   This list acts as a buffer/interface between enqueuing a job and actually scheduling it to
-    #   run on a specific worker.
-    # - Items added by enqueue_jobs.
-    # - Items popped by schedule_jobs.
-    #
-    # jobs:scheduling [List]
-    #
-    # - An intermediate list of job IDs that are currently being scheduled by schedule_jobs.
-    #   This exists so we can atomically block and pop from jobs:runnable to this list without
-    #   needing to find an idle worker yet, then we immediately pop the job from this list to the
-    #   worker's runnable list.
-    # - Items added by schedule_jobs.
-    # - Items popped by schedule_jobs.
-    #
-    # job:<id>:data [String]
-    #
-    # - Arbitrary job data. Right now just "process_snapshot:<id>".
-    # - Added on every insert_snapshot_job call.
-    # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
-    #
-    # job:<id>:subscription_id [Integer]
-    #
-    # - The subscription ID of the build associated to this job.
-    # - Added on every insert_snapshot_job call.
-    # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
-    #
-    # workers:created:counter [Integer]
-    #
-    # - The all-time count of workers created.
-    # - Incremented by register_worker.
-    # - Never deleted.
-    #
-    # workers:online [Sorted Set]
-    #
-    # - All the currently online workers, scored by machine ID.
-    # - Items added by register_worker.
-    # - Items deleted by remove_worker.
-    #
-    # workers:idle [Sorted Set]
-    #
-    # - All the currently idle workers, scored by machine ID. Jobs are scheduled on the lowest
-    #   ranked worker that is idle.
-    # - Items added by set_worker_idle (called by the worker).
-    # - Items deleted by schedule_jobs after job is scheduled, and permanently by remove_worker.
-    #
-    # machines:created:counter [Integer]
-    #
-    # - The all-time count of machines created.
-    # - Incremented and used by start_machine.
-    # - Never deleted.
-    #
-    # machine:<id>:started_at [Integer]
-    #
-    # - The time this machine was started. When a worker starts, it uses this to record a histogram
-    #   statistic of how long it took from machine allocation to worker ready.
-    # - Added by start_machine.
-    # - Deleted by setting to EXPIRE 24 hours after being set.
-    #
-    # -----
+    attr_accessor :_heard_interrupt
 
     def run(command:)
       case command.to_sym
-      when :queuer
-        Percy.logger.info('[hub] Waiting for jobs to enqueue...')
+      when :enqueuer
         enqueue_jobs
       when :scheduler
         schedule_jobs
+      when :solo
+        fork { enqueue_jobs }
+        fork { schedule_jobs }
+        begin
+          Process.waitall
+        rescue Interrupt
+          # When Ctrl-C'd, wait until children shutdown.
+          Process.waitall
+        end
       when :insert_test_job
         subscription_id = Random.rand(1..2)
         case subscription_id
@@ -200,11 +210,13 @@ module Percy
 
     # An infinite loop that continuously enqueues jobs and enforces subscription concurrency limits.
     def enqueue_jobs
-      while true do
+      Percy.logger.info('[hub:enqueuer] Waiting for jobs to enqueue...')
+      infinite_loop_with_graceful_shutdown do
         sleeptime = _enqueue_jobs
         stats.count('hub.jobs.enqueuing.sleeptime', sleeptime)
-        sleep sleeptime
+        sleep(sleeptime)
       end
+      Percy.logger.info('[hub:enqueuer] Quit')
     end
 
     # A single iteration of the enqueue_jobs algorithm which returns the amount of time to sleep
@@ -245,7 +257,7 @@ module Percy
         end
 
         index = 0
-        while true do
+        loop do
           build_id = redis.zrange('builds:active', index, index).first
 
           # We've iterated through all the active builds and successfully checked and/or enqueued
@@ -257,14 +269,14 @@ module Percy
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
-          while true do
+          loop do
             job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
             case job_result
             when 1
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              Percy.logger.info("[hub] Enqueued job from build #{build_id}")
+              Percy.logger.debug("[hub:enqueuer] Enqueued job from build #{build_id}")
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
@@ -275,13 +287,14 @@ module Percy
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
-              Percy.logger.info("[hub] Concurrency limit hit, skipping jobs from #{build_id}.")
+              Percy.logger.debug(
+                "[hub:enqueuer] Concurrency limit hit, skipping jobs from #{build_id}.")
               index += 1
               break
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
-              Percy.logger.info("[hub] Could not enqueue jobs, no idle workers available.")
+              Percy.logger.info("[hub:enqueuer] Could not enqueue jobs, no idle workers available.")
 
               # Sleep for this amount of time waiting for a worker before checking again.
               return 1
@@ -374,9 +387,11 @@ module Percy
     # Schedules jobs from jobs:runnable onto idle workers.
     #
     def schedule_jobs
-      while true do
-        sleep _schedule_next_job
+      Percy.logger.info('[hub:scheduler] Waiting for jobs to schedule...')
+      infinite_loop_with_graceful_shutdown do
+        sleep(_schedule_next_job)
       end
+      Percy.logger.info('[hub:scheduler] Quit')
     end
 
     # A single iteration of the schedule_jobs algorithm which blocks and waits for a job in
@@ -394,10 +409,14 @@ module Percy
     # at maximum, but when load slows workers will become idle from newest to oldest.
     #
     # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
-    def _schedule_next_job
+    def _schedule_next_job(timeout: nil)
       # Block and wait to pop a job from runnable to scheduling.
-      Percy.logger.info('[hub] Waiting for jobs to schedule...')
-      job_id = redis.brpoplpush("jobs:runnable", "jobs:scheduling")
+      timeout = timeout || DEFAULT_TIMEOUT_SECONDS
+      job_id = redis.brpoplpush("jobs:runnable", "jobs:scheduling", timeout)
+
+      # Hit timeout and did not schedule any jobs, return 0 sleeptime and start again. This timeout
+      # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
+      return 0 if !job_id
 
       # Find an idle worker to schedule the job on.
       worker_id = redis.zrange('workers:idle', 0, 0).first
@@ -417,8 +436,7 @@ module Percy
 
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
       redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
-
-      Percy.logger.info("[hub] Scheduled job #{job_id} on worker #{worker_id}")
+      Percy.logger.info("[hub:scheduler] Scheduled job #{job_id} on worker #{worker_id}")
 
       return 0
     end
@@ -429,7 +447,7 @@ module Percy
     #   - `nil` when the operation timed out
     #   - the job data otherwise
     def wait_for_job(worker_id:, timeout: nil)
-      timeout = timeout || DEFAULT_WORKER_WAIT_SECONDS
+      timeout = timeout || DEFAULT_TIMEOUT_SECONDS
       result = redis.brpoplpush(
         "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
       return if !result
@@ -495,6 +513,21 @@ module Percy
     def _run_script(name, keys:, args: nil)
       script = File.read(File.expand_path("../hub/scripts/#{name}", __FILE__))
       redis.eval(script, keys: keys, argv: args)
+    end
+
+    def infinite_loop_with_graceful_shutdown(&block)
+      # Catch SIGINT and SIGTERM and trigger gracefully shutdown on the next loop iteration.
+      self._heard_interrupt = false
+      Signal.trap(:INT) do
+        puts 'Quitting...'
+        self._heard_interrupt = true
+      end
+      Signal.trap(:TERM) { self._heard_interrupt = true }
+
+      loop do
+        break if _heard_interrupt
+        yield
+      end
     end
   end
 end

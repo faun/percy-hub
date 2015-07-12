@@ -23,12 +23,12 @@ module Percy
 
         count = 0
         loop do
+          # Every time a job completes or wait_for_job times out (regularly), check if we should stop.
+          break if heard_interrupt
+
           # Exit if we've exceeded times, but only if times is set (infinite loop otherwise).
           count += 1
           break if times && count > times
-
-          # Every time a job completes or wait_for_job times out (regularly), check if we should stop.
-          break if heard_interrupt
 
           hub.set_worker_idle(worker_id: worker_id)
           job_id = hub.wait_for_job(worker_id: worker_id)
