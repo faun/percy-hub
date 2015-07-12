@@ -77,7 +77,6 @@ DEPENDENCIES
   bundler (~> 1.7)
   guard-rspec
   percy-hub!
-  pry
   rake (~> 10.0)
   rspec (~> 3)
 
