@@ -1,0 +1,67 @@
+require 'percy/hub'
+
+module Percy
+  class Hub
+    class Worker
+      def run(times: nil, &block)
+        raise ArgumentError.new('block must be given') if !block_given?
+
+        hub = Percy::Hub.new
+
+        # Catch SIGINT and SIGTERM and trigger gracefully shutdown after the job completes.
+        heard_interrupt = false
+        Signal.trap(:INT) do
+          puts 'Quitting...'
+          heard_interrupt = true
+        end
+        Signal.trap(:TERM) { heard_interrupt = true }
+
+        Percy.logger.info("[worker] Registering...")
+        worker_id = hub.register_worker(machine_id: ENV['PERCY_WORKER_MACHINE_ID'] || 1)
+
+        Percy.logger.info("[worker:#{worker_id}] Ready! Waiting for jobs.")
+
+        count = 0
+        loop do
+          # Exit if we've exceeded times, but only if times is set (infinite loop otherwise).
+          count += 1
+          break if times && count > times
+
+          # Every time a job completes or wait_for_job times out (regularly), check if we should stop.
+          break if heard_interrupt
+
+          hub.set_worker_idle(worker_id: worker_id)
+          job_id = hub.wait_for_job(worker_id: worker_id)
+
+          # Handle regular timeouts from wait_for_job and restart.
+          next if !job_id
+
+          Percy.logger.info("[worker:#{worker_id}] Running job: #{job_id}")
+          job_data = hub.get_job_data(job_id: job_id)
+
+          # Assumes a particular format for job_data, might need to be adapted for other jobs.
+          action, action_id = job_data.split(':')
+          action = action.to_sym
+          action_id = Integer(action_id)
+
+          case action
+          when :process_snapshot
+            options = {snapshot_id: action_id}
+            yield(action, options)
+          else
+            raise NotImplementedError.new("Unhandled job type: #{action}")
+          end
+
+          hub.worker_job_complete(worker_id: worker_id)
+          hub.cleanup_job(job_id: job_id)
+        end
+
+        # Shutdown gracefully.
+        Percy.logger.info("[worker:#{worker_id}] Shutting down worker...")
+        hub.remove_worker(worker_id: worker_id)
+      end
+    end
+  end
+end
+
+
