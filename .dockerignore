@@ -1,0 +1,11 @@
+# Files.
+.dockerignore
+
+# Folders.
+.git/
+tmp/
+vendor/bundle/
+
+# Do not add the Gemfile to force bundler to only use Gemfile.lock
+# (because the gemspec relies on being a git repo, but we've ignored the git dir).
+Gemfile
