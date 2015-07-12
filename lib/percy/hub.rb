@@ -119,8 +119,6 @@
 # - Added by start_machine.
 # - Deleted by setting to EXPIRE 24 hours after being set.
 
-require 'pry'
-
 require 'percy/logger'
 require 'percy/stats'
 require 'percy/hub/version'
