@@ -1,7 +1,0 @@
-# Files.
-.dockerignore
-
-# Folders.
-.git/
-tmp/
-vendor/bundle/
