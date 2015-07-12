@@ -121,7 +121,6 @@
 
 require 'pry'
 
-require 'percy/async'
 require 'percy/logger'
 require 'percy/stats'
 require 'percy/hub/version'
@@ -202,21 +201,23 @@ module Percy
 
         _run_script('insert_snapshot_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', job_id)
-        Percy.logger.info(
-          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}, subscription #{subscription_id}")
+        Percy.logger.debug do
+          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}, " +
+          "subscription #{subscription_id}"
+        end
         job_id
       end
     end
 
     # An infinite loop that continuously enqueues jobs and enforces subscription concurrency limits.
     def enqueue_jobs
-      Percy.logger.info('[hub:enqueuer] Waiting for jobs to enqueue...')
+      Percy.logger.info { '[hub:enqueuer] Waiting for jobs to enqueue...' }
       infinite_loop_with_graceful_shutdown do
         sleeptime = _enqueue_jobs
         stats.count('hub.jobs.enqueuing.sleeptime', sleeptime)
         sleep(sleeptime)
       end
-      Percy.logger.info('[hub:enqueuer] Quit')
+      Percy.logger.info { '[hub:enqueuer] Quit' }
     end
 
     # A single iteration of the enqueue_jobs algorithm which returns the amount of time to sleep
@@ -276,7 +277,7 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              Percy.logger.debug("[hub:enqueuer] Enqueued job from build #{build_id}")
+              Percy.logger.debug { "[hub:enqueuer] Enqueued job from build #{build_id}" }
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
@@ -287,14 +288,17 @@ module Percy
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
-              Percy.logger.debug(
-                "[hub:enqueuer] Concurrency limit hit, skipping jobs from #{build_id}.")
+              Percy.logger.debug do
+                "[hub:enqueuer] Concurrency limit hit, skipping jobs from #{build_id}."
+              end
               index += 1
               break
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
-              Percy.logger.info("[hub:enqueuer] Could not enqueue jobs, no idle workers available.")
+              Percy.logger.warn do
+                "[hub:enqueuer] Could not enqueue jobs, no idle workers available."
+              end
 
               # Sleep for this amount of time waiting for a worker before checking again.
               return 1
@@ -320,7 +324,7 @@ module Percy
 
     def remove_active_build(build_id:)
       stats.time('hub.methods.remove_active_build') do
-        Percy.logger.info("[hub] Removing build #{build_id}.")
+        Percy.logger.info { "[hub] Removing build #{build_id}, no more jobs." }
         keys = [
           'builds:active',
           "build:#{build_id}:subscription_id",
@@ -378,7 +382,7 @@ module Percy
           worker_id,
         ]
         result = _run_script('remove_worker.lua', keys: keys, args: args)
-        Percy.logger.info("[hub] Removed worker #{worker_id}.")
+        Percy.logger.info { "[hub] Removed worker #{worker_id}." }
         _record_worker_stats
         result
       end
@@ -387,11 +391,11 @@ module Percy
     # Schedules jobs from jobs:runnable onto idle workers.
     #
     def schedule_jobs
-      Percy.logger.info('[hub:scheduler] Waiting for jobs to schedule...')
+      Percy.logger.info { '[hub:scheduler] Waiting for jobs to schedule...' }
       infinite_loop_with_graceful_shutdown do
         sleep(_schedule_next_job)
       end
-      Percy.logger.info('[hub:scheduler] Quit')
+      Percy.logger.info { '[hub:scheduler] Quit' }
     end
 
     # A single iteration of the schedule_jobs algorithm which blocks and waits for a job in
@@ -436,7 +440,7 @@ module Percy
 
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
       redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
-      Percy.logger.info("[hub:scheduler] Scheduled job #{job_id} on worker #{worker_id}")
+      Percy.logger.info { "[hub:scheduler] Scheduled job #{job_id} on worker #{worker_id}" }
 
       return 0
     end
