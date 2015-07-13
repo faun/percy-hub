@@ -5,11 +5,10 @@ local job_data_key = KEYS[4]
 local job_subscription_id_key = KEYS[5]
 
 local job_id = ARGV[1]
-local snapshot_id = ARGV[2]
-local build_id = ARGV[3]
-local subscription_id = ARGV[4]
-local now = ARGV[5]
-local job_data = ARGV[6]
+local build_id = ARGV[2]
+local subscription_id = ARGV[3]
+local now = ARGV[4]
+local job_data = ARGV[5]
 
 -- The score in builds:active is the first insertion time of build_id into builds:active. If the
 -- build already exists in this sorted set when the next snapshot job is inserted, the score is

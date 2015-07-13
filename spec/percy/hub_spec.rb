@@ -2,11 +2,11 @@ RSpec.describe Percy::Hub do
   let(:hub) { Percy::Hub.new }
   let(:machine_id) { hub.start_machine }
 
-  describe '#insert_snapshot_job' do
+  describe '#insert_job' do
     it 'inserts a snapshot job and updates relevant keys' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
 
-      result = hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      result = hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       expect(result).to eq(1)
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
@@ -18,8 +18,8 @@ RSpec.describe Percy::Hub do
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
-      hub.insert_snapshot_job(
-        snapshot_id: 123,
+      hub.insert_job(
+        job_data: 'process_snapshot:123',
         build_id: 234,
         subscription_id: 345,
         inserted_at: 20000,
@@ -27,19 +27,24 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
 
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(2)
       expect(hub.redis.zscore('builds:active', 234)).to eq(20000)
     end
     it 'fails if given nil arguments' do
       expect do
-        hub.insert_snapshot_job(snapshot_id: nil, build_id: 234, subscription_id: 345)
+        hub.insert_job(snapshot_id: nil, build_id: 234, subscription_id: 345)
       end.to raise_error(ArgumentError)
       expect do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: nil, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: nil, subscription_id: 345)
       end.to raise_error(ArgumentError)
       expect do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: nil)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: nil)
+      end.to raise_error(ArgumentError)
+    end
+    it 'fails if given bad job_data' do
+      expect do
+        hub.insert_job(job_data: 'bad-action-name:123', build_id: 234, subscription_id: 345)
       end.to raise_error(ArgumentError)
     end
   end
@@ -54,8 +59,8 @@ RSpec.describe Percy::Hub do
       end
 
       it 'enqueues all jobs if enough idle workers and subscription locks' do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
 
         # Returns 0.5, indicating completion of all enqueuing.
         expect(hub._enqueue_jobs).to eq(0.5)
@@ -63,10 +68,10 @@ RSpec.describe Percy::Hub do
         expect(hub.redis.llen('jobs:runnable')).to eq(2)
       end
       it 'enqueues jobs from multiple builds if enough idle workers and subscription locks' do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 130, build_id: 235, subscription_id: 346)
-        hub.insert_snapshot_job(snapshot_id: 131, build_id: 235, subscription_id: 346)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:130', build_id: 235, subscription_id: 346)
+        hub.insert_job(job_data: 'process_snapshot:131', build_id: 235, subscription_id: 346)
 
         # Returns 0.5, indicating completion of all enqueuing.
         expect(hub._enqueue_jobs).to eq(0.5)
@@ -75,7 +80,8 @@ RSpec.describe Percy::Hub do
       end
       it 'skips empty builds and cleans up empty active builds' do
         # Insert a job and then enqueue, so we leave a build ID in builds:active.
-        job_id = hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+        job_id = hub.insert_job(
+          job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
         expect(hub.redis.zcard('builds:active')).to eq(1)
         expect(hub._enqueue_jobs).to eq(0.5)
         expect(hub.redis.zcard('builds:active')).to eq(0)
@@ -85,14 +91,14 @@ RSpec.describe Percy::Hub do
         expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([job_id.to_s])
       end
       it 'enforces concurrency limits (default 2 per subscription)' do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 125, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 126, build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:125', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:126', build_id: 234, subscription_id: 345)
 
-        hub.insert_snapshot_job(snapshot_id: 130, build_id: 235, subscription_id: 346)
-        hub.insert_snapshot_job(snapshot_id: 131, build_id: 235, subscription_id: 346)
-        hub.insert_snapshot_job(snapshot_id: 132, build_id: 235, subscription_id: 346)
+        hub.insert_job(job_data: 'process_snapshot:130', build_id: 235, subscription_id: 346)
+        hub.insert_job(job_data: 'process_snapshot:131', build_id: 235, subscription_id: 346)
+        hub.insert_job(job_data: 'process_snapshot:132', build_id: 235, subscription_id: 346)
 
         # Returns 0.5, indicating completion of all enqueuing.
         expect(hub._enqueue_jobs).to eq(0.5)
@@ -104,16 +110,16 @@ RSpec.describe Percy::Hub do
     end
     context 'with NO idle workers available' do
       it 'returns sleeptime 1 and does not enqueue jobs' do
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
         expect(hub._enqueue_jobs).to eq(1)
         expect(hub.redis.llen('jobs:runnable')).to eq(0)
       end
       it 'performs lock count check first before idle worker check' do
         hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
         hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-        hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
-        hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
+        hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
 
         # This magic "0.5" indicates the hit_lock_limit sleeptime path.
         expect(hub._enqueue_jobs).to eq(0.5)
@@ -128,7 +134,7 @@ RSpec.describe Percy::Hub do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
 
     it 'returns no_idle_worker if there are no idle workers available' do
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       result = hub._enqueue_next_job(build_id: 234, subscription_id: 345)
       expect(result).to eq('no_idle_worker')
       expect(hub.redis.llen('jobs:runnable')).to eq(0)
@@ -136,13 +142,13 @@ RSpec.describe Percy::Hub do
     it 'computes number of idle workers as idle workers minus the number of jobs:runnable' do
       # Create an idle worker and add a job to jobs:runnable.
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       result = hub._enqueue_next_job(build_id: 234, subscription_id: 345)
       expect(result).to eq(1)
       expect(hub.redis.llen('jobs:runnable')).to eq(1)
 
       # The worker is idle but there is a job in jobs:runnable, so 'no_idle_worker' is returned.
-      hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
       expect(hub._enqueue_next_job(build_id: 234, subscription_id: 345)).to eq('no_idle_worker')
     end
     it 'returns hit_lock_limit when concurrency limit is exceeded (and defaults limit to 2)' do
@@ -150,9 +156,9 @@ RSpec.describe Percy::Hub do
       hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
       hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
 
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-      hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
-      hub.insert_snapshot_job(snapshot_id: 125, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:125', build_id: 234, subscription_id: 345)
 
       expect(hub.redis.llen('jobs:runnable')).to eq(0)
       expect(hub._enqueue_next_job(build_id: 234, subscription_id: 345)).to eq(1)
@@ -175,9 +181,9 @@ RSpec.describe Percy::Hub do
     it 'returns 1 and moves the earliest job into jobs:runnable if there is an idle worker' do
       hub.set_worker_idle(worker_id: worker_id)
 
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
-      hub.insert_snapshot_job(snapshot_id: 124, build_id: 234, subscription_id: 345)
-      hub.insert_snapshot_job(snapshot_id: 1000, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:124', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:1000', build_id: 234, subscription_id: 345)
 
       result = hub._enqueue_next_job(build_id: 234, subscription_id: 345)
       expect(result).to eq(1)
@@ -189,7 +195,7 @@ RSpec.describe Percy::Hub do
   describe '#remove_active_build' do
     it 'removes the build from builds:active' do
       hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_next_job(build_id: 234, subscription_id: 345)
 
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
@@ -203,7 +209,7 @@ RSpec.describe Percy::Hub do
       expect(hub.remove_active_build(build_id: 234)).to eq(false)
     end
     it 'does nothing if build is actually active (has unqueued jobs)' do
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
 
       expect(hub.remove_active_build(build_id: 234)).to eq(false)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
@@ -263,7 +269,7 @@ RSpec.describe Percy::Hub do
     it 'pushes orphaned jobs from worker:<id>:runnable into jobs:orphaned' do
       worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
 
@@ -276,7 +282,7 @@ RSpec.describe Percy::Hub do
     it 'pushes orphaned jobs from worker:<id>:running into jobs:orphaned' do
       worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
       hub.wait_for_job(worker_id: worker_id)
@@ -294,7 +300,7 @@ RSpec.describe Percy::Hub do
       second_worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: second_worker_id)
 
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       expect(hub.redis.zrange('workers:idle', 0, 10)).to eq([second_worker_id.to_s])
 
@@ -306,7 +312,7 @@ RSpec.describe Percy::Hub do
     it 'returns 1 in the edge case where no idle worker is available but a job is' do
       worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._clear_worker_idle(worker_id: worker_id)
 
@@ -324,7 +330,7 @@ RSpec.describe Percy::Hub do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
     it 'returns the next runnable job on the worker' do
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
 
@@ -348,7 +354,7 @@ RSpec.describe Percy::Hub do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
     before(:each) do
       hub.set_worker_idle(worker_id: worker_id)
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
       hub.wait_for_job(worker_id: worker_id)
@@ -376,7 +382,7 @@ RSpec.describe Percy::Hub do
   end
   describe '#cleanup_job' do
     it 'removes job related keys' do
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       expect(hub.redis.get('job:1:data')).to be
       expect(hub.redis.get('job:1:subscription_id')).to be
       hub.cleanup_job(job_id: 1)

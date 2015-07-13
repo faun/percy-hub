@@ -22,7 +22,7 @@ RSpec.describe Percy::Hub::Worker do
       # Wait until the worker is running.
       sleep 0.1 until hub.redis.zcard('workers:idle') > 0
 
-      hub.insert_snapshot_job(snapshot_id: 123, build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
 

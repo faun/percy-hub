@@ -18,7 +18,7 @@
 #   the same. This has the side-effect of keeping active builds that send snapshots quickly at
 #   the front of the queue. This also means builds are not necessarily executed in order, if a
 #   build is slow to send snapshots it may not remain at the front of the priority list.
-# - Items added in insert_snapshot_job.
+# - Items added in insert_job.
 # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
 #   The last job is simply the last we've received, not necessarily the last ever for the build.
 #
@@ -37,19 +37,19 @@
 # build:<id>:subscription_id [Integer]
 #
 # - Subscription ID so we can get from a build to its subscription limit and active locks.
-# - Added on every insert_snapshot_job call.
+# - Added on every insert_job call.
 # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
 #
 # build:<id>:jobs:new [List]
 #
 # - List of jobs that have not been enqueued or run yet.
-# - Added on every insert_snapshot_job call.
+# - Added on every insert_job call.
 # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
 #
 # jobs:created:counter [Integer]
 #
 # - An all-time counter of jobs created, used as IDs for jobs.
-# - Incremented by insert_snapshot_job.
+# - Incremented by insert_job.
 # - Never deleted. Limited to 9,223,372,036,854,775,807 jobs, hah!
 #
 # jobs:completed:counter [Integer]
@@ -78,13 +78,13 @@
 # job:<id>:data [String]
 #
 # - Arbitrary job data. Right now just "process_snapshot:<id>".
-# - Added on every insert_snapshot_job call.
+# - Added on every insert_job call.
 # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
 #
 # job:<id>:subscription_id [Integer]
 #
 # - The subscription ID of the build associated to this job.
-# - Added on every insert_snapshot_job call.
+# - Added on every insert_job call.
 # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
 #
 # workers:created:counter [Integer]
@@ -157,8 +157,8 @@ module Percy
           build_id = Random.rand(10..13)
           snapshot_id = Random.rand(1001..2000)
         end
-        insert_snapshot_job(
-          snapshot_id: snapshot_id,
+        insert_job(
+          insert_job: "process_snapshot:#{snapshot_id}",
           build_id: build_id,
           subscription_id: subscription_id,
         )
@@ -169,14 +169,18 @@ module Percy
       @stats ||= Percy::Stats.new
     end
 
-    # Inserts a new process_snapshot job.
-    def insert_snapshot_job(snapshot_id:, build_id:, subscription_id:, inserted_at: nil)
+    # Inserts a new job.
+    def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.
-      raise ArgumentError.new('snapshot_id is required') if !snapshot_id
+      raise ArgumentError.new('job_data is required') if !job_data
       raise ArgumentError.new('build_id is required') if !build_id
       raise ArgumentError.new('subscription_id is required') if !subscription_id
 
-      stats.time('hub.methods.insert_snapshot_job') do
+      # Right now, enforce a single format for job data because the worker also enforces it.
+      raise ArgumentError.new(
+        'job_data must match process_snapshot:\d+') if !job_data.match(/\Aprocess_snapshot:\d+\Z/)
+
+      stats.time('hub.methods.insert_job') do
         # Increment the global jobs counter.
         job_id = redis.incr('jobs:created:counter')
 
@@ -187,17 +191,15 @@ module Percy
           "job:#{job_id}:data",
           "job:#{job_id}:subscription_id",
         ]
-        job_data = "process_snapshot:#{snapshot_id}"
         args = [
           job_id,
-          snapshot_id,
           build_id,
           subscription_id,
           inserted_at || Time.now.to_i,
           job_data,
         ]
 
-        _run_script('insert_snapshot_job.lua', keys: keys, args: args)
+        _run_script('insert_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', job_id)
         Percy.logger.debug do
           "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}, " +
@@ -349,7 +351,7 @@ module Percy
     end
 
     def register_worker(machine_id:)
-      raise ArgumentError.new('snapshot_id is required') if !machine_id
+      raise ArgumentError.new('machine_id is required') if !machine_id
       stats.time('hub.methods.register_worker') do
         worker_id = redis.incr('workers:created:counter')
         redis.zadd('workers:online', machine_id, worker_id)

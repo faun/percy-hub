@@ -48,7 +48,13 @@ module Percy
           when :process_snapshot
             options = {snapshot_id: action_id}
             hub.stats.time('hub.jobs.completed.process_snapshot') do
-              yield(action, options)
+              begin
+                yield(action, options)
+              rescue Exception => e
+                # Capture and ignore all errors.
+                Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
+                Percy.logger.error(e.backtrace.join("\n"))
+              end
             end
           else
             raise NotImplementedError.new("Unhandled job type: #{action}")
