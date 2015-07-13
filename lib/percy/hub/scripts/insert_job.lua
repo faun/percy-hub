@@ -2,7 +2,8 @@ local builds_active_key = KEYS[1]
 local build_subscription_id_key = KEYS[2]
 local build_jobs_new_key = KEYS[3]
 local job_data_key = KEYS[4]
-local job_subscription_id_key = KEYS[5]
+local job_build_id_key = KEYS[5]
+local job_subscription_id_key = KEYS[6]
 
 local job_id = ARGV[1]
 local build_id = ARGV[2]
@@ -25,6 +26,7 @@ redis.call('SET', build_subscription_id_key, subscription_id)
 
 -- Set the job data.
 redis.call('SET', job_data_key, job_data)
+redis.call('SET', job_build_id_key, build_id)
 redis.call('SET', job_subscription_id_key, subscription_id)
 
 -- Add the job ID to the sorted set of build jobs.

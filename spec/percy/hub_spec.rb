@@ -15,6 +15,7 @@ RSpec.describe Percy::Hub do
 
       expect(hub.redis.get('job:1:data')).to eq('process_snapshot:123')
       expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
+      expect(hub.redis.get('job:1:build_id').to_i).to eq(234)
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
@@ -384,9 +385,11 @@ RSpec.describe Percy::Hub do
     it 'removes job related keys' do
       hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       expect(hub.redis.get('job:1:data')).to be
+      expect(hub.redis.get('job:1:build_id')).to be
       expect(hub.redis.get('job:1:subscription_id')).to be
       hub.cleanup_job(job_id: 1)
       expect(hub.redis.get('job:1:data')).to be_nil
+      expect(hub.redis.get('job:1:build_id')).to be_nil
       expect(hub.redis.get('job:1:subscription_id')).to be_nil
     end
   end

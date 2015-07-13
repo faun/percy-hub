@@ -87,6 +87,12 @@
 # - Added on every insert_job call.
 # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
 #
+# job:<id>:build_id [Integer]
+#
+# - The job's build ID.
+# - Added on every insert_job call.
+# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+#
 # workers:created:counter [Integer]
 #
 # - The all-time count of workers created.
@@ -189,6 +195,7 @@ module Percy
           "build:#{build_id}:subscription_id",
           "build:#{build_id}:jobs:new",
           "job:#{job_id}:data",
+          "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
         ]
         args = [
@@ -492,6 +499,7 @@ module Percy
     def cleanup_job(job_id:)
       stats.time('hub.methods.cleanup_job') do
         redis.del("job:#{job_id}:data")
+        redis.del("job:#{job_id}:build_id")
         redis.del("job:#{job_id}:subscription_id")
       end
     end
