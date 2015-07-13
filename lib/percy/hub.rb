@@ -182,7 +182,7 @@ module Percy
       raise ArgumentError.new('build_id is required') if !build_id
       raise ArgumentError.new('subscription_id is required') if !subscription_id
 
-      # Right now, enforce a single format for job data because the worker also enforces it.
+      # Right now, enforce a single format for job_data because the worker also enforces it.
       raise ArgumentError.new(
         'job_data must match process_snapshot:\d+') if !job_data.match(/\Aprocess_snapshot:\d+\Z/)
 
@@ -494,6 +494,15 @@ module Percy
       stats.gauge('hub.jobs.completed.alltime', job_id)
 
       job_id
+    end
+
+    def retry_job(job_id:)
+      stats.increment('hub.jobs.retried')
+      job_data = redis.get("job:#{job_id}:data")
+      build_id = redis.get("job:#{job_id}:build_id")
+      subscription_id = redis.get("job:#{job_id}:subscription_id")
+
+      insert_job(job_data: job_data, build_id: build_id, subscription_id: subscription_id)
     end
 
     def cleanup_job(job_id:)

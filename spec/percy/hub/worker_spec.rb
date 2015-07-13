@@ -33,6 +33,25 @@ RSpec.describe Percy::Hub::Worker do
     it 'fails if not given a block' do
       expect { worker.run }.to raise_error(ArgumentError)
     end
+    it 'silently captures exceptions and re-inserts the job to be retried' do
+      thread = Thread.new do
+        worker.run(times: 1) do |action, options|
+          raise Exception
+        end
+      end
+
+      # Wait until the worker is running.
+      sleep 0.1 until hub.redis.zcard('workers:idle') > 0
+
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+      expect(hub.redis.get('job:1:data')).to be
+
+      thread.join(1)
+      expect(hub.redis.get('job:1:data')).to_not be
+      expect(hub.redis.get('job:2:data')).to be
+    end
   end
 end
 

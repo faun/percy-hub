@@ -381,12 +381,29 @@ RSpec.describe Percy::Hub do
       hub.worker_job_complete(worker_id: worker_id)
     end
   end
+  describe '#retry_job' do
+    it 'inserts a new job with the same job data' do
+      expect(hub.stats).to receive(:increment).once.with('hub.jobs.retried').and_call_original
+
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      expect(hub.redis.get('job:1:data')).to be
+
+      # Make sure insert_job gets called correctly, so then we can weakly check some data.
+      expect(hub).to receive(:insert_job)
+        .once.with(job_data: 'process_snapshot:123', build_id: '234', subscription_id: '345')
+        .and_call_original
+      expect(hub.retry_job(job_id: 1)).to eq(2)
+      expect(hub.redis.get('job:2:data')).to be
+    end
+  end
   describe '#cleanup_job' do
     it 'removes job related keys' do
       hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       expect(hub.redis.get('job:1:data')).to be
       expect(hub.redis.get('job:1:build_id')).to be
       expect(hub.redis.get('job:1:subscription_id')).to be
+
+      expect(hub.stats).to receive(:time).once.with('hub.methods.cleanup_job').and_call_original
       hub.cleanup_job(job_id: 1)
       expect(hub.redis.get('job:1:data')).to be_nil
       expect(hub.redis.get('job:1:build_id')).to be_nil

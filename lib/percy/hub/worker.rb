@@ -44,6 +44,7 @@ module Percy
           action = action.to_sym
           action_id = Integer(action_id)
 
+          failed = false
           case action
           when :process_snapshot
             options = {snapshot_id: action_id}
@@ -54,6 +55,7 @@ module Percy
                 # Capture and ignore all errors.
                 Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
                 Percy.logger.error(e.backtrace.join("\n"))
+                failed = true
               end
             end
           else
@@ -61,6 +63,12 @@ module Percy
           end
 
           hub.worker_job_complete(worker_id: worker_id)
+          if failed
+            # Insert the job to be retried immediately if failed.
+            # TODO(fotinakis): this is slightly dangerous and might cause infinite failure loops,
+            # though they'd still be subscription rate limited. Consider adding counts and delays.
+            hub.retry_job(job_id: job_id)
+          end
           hub.cleanup_job(job_id: job_id)
         end
 
