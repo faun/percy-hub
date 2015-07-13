@@ -370,9 +370,9 @@ RSpec.describe Percy::Hub do
       hub.worker_job_complete(worker_id: worker_id)
       expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
     end
-    it 'returns -1 if no job was running' do
+    it 'returns nil if no job was running' do
       expect(hub.stats).to_not receive(:increment)
-      expect(hub.worker_job_complete(worker_id: 999)).to eq(-1)
+      expect(hub.worker_job_complete(worker_id: 999)).to be_nil
     end
     it 'records stats if successful' do
       expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original

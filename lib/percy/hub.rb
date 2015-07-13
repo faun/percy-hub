@@ -473,14 +473,12 @@ module Percy
 
     # Marks the worker's current job as complete and releases the subscription lock.
     #
-    # @return [Integer]
-    #   - `-1` when there was no job to mark complete
+    # @return [nil, Integer]
+    #   - `nil` when there was no job to mark complete
     #   - the job ID otherwise
     def worker_job_complete(worker_id:)
       job_id = redis.rpop("worker:#{worker_id}:running")
-      if !job_id
-        return -1
-      end
+      return if !job_id
 
       # Release the subscription lock that was added by enqueue_jobs.
       subscription_id = redis.get("job:#{job_id}:subscription_id")
