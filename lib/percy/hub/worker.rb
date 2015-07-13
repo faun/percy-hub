@@ -36,7 +36,7 @@ module Percy
           # Handle regular timeouts from wait_for_job and restart.
           next if !job_id
 
-          Percy.logger.info("[worker:#{worker_id}] Running job: #{job_id}")
+          Percy.logger.info("[worker:#{worker_id}] Running job #{job_id}")
           job_data = hub.get_job_data(job_id: job_id)
 
           # Assumes a particular format for job_data, might need to be adapted for other jobs.
@@ -54,7 +54,7 @@ module Percy
               rescue Exception => e
                 # Capture and ignore all errors.
                 Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
-                Percy.logger.error(e.backtrace.join("\n"))
+                Percy.logger.debug(e.backtrace.join("\n"))
                 failed = true
               end
             end
@@ -70,6 +70,7 @@ module Percy
             hub.retry_job(job_id: job_id)
           end
           hub.cleanup_job(job_id: job_id)
+          Percy.logger.info("[worker:#{worker_id}] Finished job #{job_id}")
         end
 
         # Shutdown gracefully.

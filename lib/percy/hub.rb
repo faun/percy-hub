@@ -209,8 +209,8 @@ module Percy
         _run_script('insert_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', job_id)
         Percy.logger.debug do
-          "[hub] Inserted job #{job_id}, snapshot #{snapshot_id}, build #{build_id}, " +
-          "subscription #{subscription_id}"
+          "[hub] Inserted job #{job_id}, build #{build_id}, " +
+          "subscription #{subscription_id}: #{job_data}"
         end
         job_id
       end
@@ -295,9 +295,9 @@ module Percy
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
-              Percy.logger.debug do
-                "[hub:enqueuer] Concurrency limit hit, skipping jobs from #{build_id}."
-              end
+              # Percy.logger.debug do
+              #   "[hub:enqueuer] Concurrency limit hit, skipping jobs from build #{build_id}."
+              # end
               index += 1
               break
             when 'no_idle_worker'
