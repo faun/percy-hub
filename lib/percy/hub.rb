@@ -524,6 +524,22 @@ module Percy
       end
     end
 
+    def get_monthly_usage(subscription_id:)
+      stats.time('hub.methods.get_monthly_usage') do
+        year = Time.now.strftime('%Y')
+        month = Time.now.strftime('%m')
+        Integer(redis.get("subscription:345:usage:#{year}:#{month}:counter") || 0)
+      end
+    end
+
+    def increment_monthly_usage(subscription_id:)
+      stats.time('hub.methods.increment_monthly_usage') do
+        year = Time.now.strftime('%Y')
+        month = Time.now.strftime('%m')
+        redis.incr("subscription:345:usage:#{year}:#{month}:counter")
+      end
+    end
+
     def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
       redis.zadd('workers:idle', machine_id, worker_id)

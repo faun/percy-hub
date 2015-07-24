@@ -5,7 +5,6 @@ Thread.abort_on_exception = true
 RSpec.describe Percy::Hub::Worker do
   let(:hub) { Percy::Hub.new }
   let(:worker) { Percy::Hub::Worker.new }
-
   describe '#run' do
     let(:machine_id) { hub.start_machine }
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }

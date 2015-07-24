@@ -430,6 +430,25 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:subscription_id')).to be_nil
     end
   end
+  describe '#get_monthly_usage' do
+    it 'gets the current month subscription usage' do
+      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(0)
+      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
+      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(1)
+      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(2)
+      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(2)
+    end
+  end
+  describe '#increment_monthly_usage' do
+    it 'increments a per-month counter for the subscription' do
+      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
+      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(2)
+
+      year = Time.now.strftime('%Y')
+      month = Time.now.strftime('%m')
+      expect(hub.redis.get("subscription:345:usage:#{year}:#{month}:counter")).to eq('2')
+    end
+  end
   describe '#_clear_worker_idle and #set_worker_idle' do
     it 'adds or removes worker from workers:idle' do
       machine_id = hub.start_machine
