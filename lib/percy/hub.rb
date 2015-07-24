@@ -175,6 +175,13 @@ module Percy
       @stats ||= Percy::Stats.new
     end
 
+    def set_subscription_locks_limit(subscription_id:, limit:)
+      stats.time('hub.methods.set_subscription_locks_limit') do
+        limit = Integer(limit)  # Sanity check.
+        redis.set("subscription:#{subscription_id}:locks:limit", limit)
+      end
+    end
+
     # Inserts a new job.
     def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.

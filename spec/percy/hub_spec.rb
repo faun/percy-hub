@@ -2,6 +2,19 @@ RSpec.describe Percy::Hub do
   let(:hub) { Percy::Hub.new }
   let(:machine_id) { hub.start_machine }
 
+  describe '#set_subscription_limit' do
+    it 'inserts a snapshot job and updates relevant keys' do
+      expect(hub.redis.get('jobs:created:counter')).to be_nil
+
+      result = hub.set_subscription_locks_limit(subscription_id: 'foo:123', limit: 5)
+      expect(hub.redis.get('subscription:foo:123:locks:limit').to_i).to eq(5)
+    end
+    it 'fails if given bad limit' do
+      expect do
+        hub.set_subscription_locks_limit(subscription_id: 'foo:123', limit: nil)
+      end.to raise_error(TypeError)
+    end
+  end
   describe '#insert_job' do
     it 'inserts a snapshot job and updates relevant keys' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil

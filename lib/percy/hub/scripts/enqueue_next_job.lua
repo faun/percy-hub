@@ -5,6 +5,7 @@ local jobs_runnable_key = KEYS[4]
 local workers_idle_key = KEYS[5]
 
 -- Grab the subscription info.
+-- Default locks limit of 2 corresponds to the FREE-2 plan.
 local default_locks_limit = 2
 local subscription_locks_limit = tonumber(redis.call('GET', subscription_locks_limit_key))
 subscription_locks_limit = subscription_locks_limit or default_locks_limit
