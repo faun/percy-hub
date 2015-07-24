@@ -182,6 +182,12 @@ module Percy
       end
     end
 
+    def get_subscription_locks_limit(subscription_id:)
+      stats.time('hub.methods.get_subscription_locks_limit') do
+        Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
+      end
+    end
+
     # Inserts a new job.
     def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.
