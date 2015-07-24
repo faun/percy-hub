@@ -532,11 +532,11 @@ module Percy
       end
     end
 
-    def increment_monthly_usage(subscription_id:)
+    def increment_monthly_usage(subscription_id:, count: nil)
       stats.time('hub.methods.increment_monthly_usage') do
         year = Time.now.strftime('%Y')
         month = Time.now.strftime('%m')
-        redis.incr("subscription:345:usage:#{year}:#{month}:counter")
+        redis.incrby("subscription:345:usage:#{year}:#{month}:counter", count || 1)
       end
     end
 

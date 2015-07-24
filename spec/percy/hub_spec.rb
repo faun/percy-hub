@@ -448,6 +448,10 @@ RSpec.describe Percy::Hub do
       month = Time.now.strftime('%m')
       expect(hub.redis.get("subscription:345:usage:#{year}:#{month}:counter")).to eq('2')
     end
+    it 'accepts an increment count' do
+      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
+      expect(hub.increment_monthly_usage(subscription_id: 345, count: 90)).to eq(91)
+    end
   end
   describe '#_clear_worker_idle and #set_worker_idle' do
     it 'adds or removes worker from workers:idle' do
