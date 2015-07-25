@@ -384,6 +384,9 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:2:data')).to_not be
       expect(hub.redis.get('job:3:data')).to be
       expect(hub.redis.get('job:4:data')).to be
+
+      # Run again to make sure that orphaned jobs were popped and cleaned up correctly.
+      expect(hub._reap_workers(older_than_seconds: 0)).to eq(5)
     end
   end
   describe '#_schedule_next_job' do
@@ -406,7 +409,7 @@ RSpec.describe Percy::Hub do
       hub.set_worker_idle(worker_id: worker_id)
       hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
-      hub._clear_worker_idle(worker_id: worker_id)
+      hub.clear_worker_idle(worker_id: worker_id)
 
       expect(hub._schedule_next_job).to eq(1)
 
@@ -531,7 +534,7 @@ RSpec.describe Percy::Hub do
       expect(hub.increment_monthly_usage(subscription_id: 345, count: 90)).to eq(91)
     end
   end
-  describe '#_clear_worker_idle and #set_worker_idle' do
+  describe '#clear_worker_idle and #set_worker_idle' do
     it 'adds or removes worker from workers:idle' do
       machine_id = hub.start_machine
       worker_id = hub.register_worker(machine_id: machine_id)
@@ -541,7 +544,7 @@ RSpec.describe Percy::Hub do
       hub.set_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:idle', worker_id)).to eq(machine_id)
 
-      hub._clear_worker_idle(worker_id: worker_id)
+      hub.clear_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:idle', worker_id)).to be_nil
     end
     it 'fails if worker is not online' do

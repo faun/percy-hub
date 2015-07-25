@@ -63,7 +63,10 @@ module Percy
             job_id = hub.wait_for_job(worker_id: worker_id)
 
             # Handle regular timeouts from wait_for_job and restart.
-            next if !job_id
+            if !job_id
+              hub.clear_worker_idle(worker_id: worker_id)
+              next
+            end
 
             Percy.logger.info("[worker:#{worker_id}] Running job #{job_id}")
             job_data = hub.get_job_data(job_id: job_id)
@@ -115,6 +118,7 @@ module Percy
         end
         # We do not cleanup the worker here, it is cleaned up by the hub itself. It is safe to leave
         # the worker "online" here because it is not idle, so no work will be scheduled to it.
+        hub.clear_worker_idle(worker_id: worker_id)
       end
     end
   end

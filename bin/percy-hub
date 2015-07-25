@@ -3,9 +3,9 @@
 require 'percy/hub'
 
 COMMANDS = [
-  'enqueuer',
-  'scheduler',
-  'worker_reaper',
+  'enqueue_jobs',
+  'schedule_jobs',
+  'reap_workers',
   'solo',
   'insert_test_job',
 ].freeze

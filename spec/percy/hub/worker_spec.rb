@@ -45,6 +45,7 @@ RSpec.describe Percy::Hub::Worker do
 
       expect(got_action).to eq(:process_snapshot)
       expect(got_options).to eq({snapshot_id: 123})
+
     end
     it 'fails if not given a block' do
       expect { worker.run }.to raise_error(ArgumentError)
@@ -63,6 +64,23 @@ RSpec.describe Percy::Hub::Worker do
       thread.join(1)
       expect(hub.redis.get('job:1:data')).to_not be
       expect(hub.redis.get('job:2:data')).to be
+    end
+    it 'removes idle status when re-hooking after wait_for_job' do
+      failhub = Percy::Hub.new
+      expect(failhub).to receive(:wait_for_job).once do
+        sleep 0.5
+        nil
+      end
+      expect(worker).to receive(:hub).at_least(:once).times.and_return(failhub)
+
+      thread = Thread.new do
+        worker.run(times: 1) { }
+      end
+
+      sleep 0.2  # Blarg, wait for worker to be up and hanging on wait_for_job sleep above.
+      expect(hub.redis.zcard('workers:idle')).to eq(1)
+      thread.join(1)
+      expect(hub.redis.zcard('workers:idle')).to eq(0)
     end
     it 'raises an error if killed by a redis error' do
       failhub = Percy::Hub.new

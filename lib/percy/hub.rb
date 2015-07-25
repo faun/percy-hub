@@ -73,6 +73,12 @@
 # - Items added by enqueue_jobs.
 # - Items popped by schedule_jobs.
 #
+# jobs:orphaned [List]
+#
+# - A list of orphaned job IDs to retry. Created if a worker died hard and did not cleanup.
+# - Items added by remove_worker.
+# - Items popped by reap_workers.
+#
 # jobs:scheduling [List]
 #
 # - An intermediate list of job IDs that are currently being scheduled by schedule_jobs.
@@ -160,11 +166,11 @@ module Percy
 
     def run(command:)
       case command.to_sym
-      when :enqueuer
+      when :enqueue_jobs
         enqueue_jobs
-      when :scheduler
+      when :schedule_jobs
         schedule_jobs
-      when :worker_reaper
+      when :reap_workers
         reap_workers
       when :solo
         fork { enqueue_jobs }
@@ -254,13 +260,13 @@ module Percy
 
     # An infinite loop that continuously enqueues jobs and enforces subscription concurrency limits.
     def enqueue_jobs
-      Percy.logger.info { '[hub:enqueuer] Waiting for jobs to enqueue...' }
+      Percy.logger.info { '[hub:enqueue_jobs] Waiting for jobs to enqueue...' }
       infinite_loop_with_graceful_shutdown do
         sleeptime = _enqueue_jobs
         stats.count('hub.jobs.enqueuing.sleeptime', sleeptime)
         sleep(sleeptime)
       end
-      Percy.logger.info { '[hub:enqueuer] Quit' }
+      Percy.logger.info { '[hub:enqueue_jobs] Quit' }
     end
 
     # A single iteration of the enqueue_jobs algorithm which returns the amount of time to sleep
@@ -320,7 +326,7 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              Percy.logger.debug { "[hub:enqueuer] Enqueued job from build #{build_id}" }
+              Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
@@ -332,7 +338,7 @@ module Percy
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
               # Percy.logger.debug do
-              #   "[hub:enqueuer] Concurrency limit hit, skipping jobs from build #{build_id}."
+              #   "[hub:enqueue_jobs] Concurrency limit hit, skipping jobs from build #{build_id}."
               # end
               index += 1
               break
@@ -340,7 +346,7 @@ module Percy
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
               Percy.logger.warn do
-                "[hub:enqueuer] Could not enqueue jobs, no idle workers available."
+                "[hub:enqueue_jobs] Could not enqueue jobs, no idle workers available."
               end
 
               # Sleep for this amount of time waiting for a worker before checking again.
@@ -451,11 +457,11 @@ module Percy
     end
 
     def reap_workers
-      Percy.logger.info { '[hub:worker_reaper] Watching workers...' }
+      Percy.logger.info { '[hub:reap_workers] Watching workers...' }
       infinite_loop_with_graceful_shutdown do
         sleep(_reap_workers)
       end
-      Percy.logger.info { '[hub:worker_reaper] Quit' }
+      Percy.logger.info { '[hub:reap_workers] Quit' }
     end
 
     def _reap_workers(older_than_seconds: DEFAULT_WORKER_REAP_SECONDS)
@@ -466,8 +472,10 @@ module Percy
 
       # Dead workers may have had jobs on them. Retry the jobs (plus 10 extra buffer so we
       # work through the orphaned jobs if any exist).
-      orphaned_job_ids = redis.lrange('jobs:orphaned', 0, dead_worker_ids.length + 10)
-      orphaned_job_ids.each do |orphaned_job_id|
+      max_orphaned_jobs = dead_worker_ids.length + 10
+      max_orphaned_jobs.times do
+        orphaned_job_id = redis.lpop('jobs:orphaned')
+        break if !orphaned_job_id
         retry_job(job_id: orphaned_job_id)
         cleanup_job(job_id: orphaned_job_id)
       end
@@ -478,11 +486,11 @@ module Percy
     # Schedules jobs from jobs:runnable onto idle workers.
     #
     def schedule_jobs
-      Percy.logger.info { '[hub:scheduler] Waiting for jobs to schedule...' }
+      Percy.logger.info { '[hub:schedule_jobs] Waiting for jobs to schedule...' }
       infinite_loop_with_graceful_shutdown do
         sleep(_schedule_next_job)
       end
-      Percy.logger.info { '[hub:scheduler] Quit' }
+      Percy.logger.info { '[hub:schedule_jobs] Quit' }
     end
 
     # A single iteration of the schedule_jobs algorithm which blocks and waits for a job in
@@ -523,11 +531,11 @@ module Percy
       end
 
       # Immediately remove the worker from the idle list.
-      _clear_worker_idle(worker_id: worker_id)
+      clear_worker_idle(worker_id: worker_id)
 
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
       redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
-      Percy.logger.info { "[hub:scheduler] Scheduled job #{job_id} on worker #{worker_id}" }
+      Percy.logger.info { "[hub:schedule_jobs] Scheduled job #{job_id} on worker #{worker_id}" }
 
       return 0
     end
@@ -614,7 +622,7 @@ module Percy
       _record_worker_stats
     end
 
-    def _clear_worker_idle(worker_id:)
+    def clear_worker_idle(worker_id:)
       redis.zrem('workers:idle', worker_id)
       _record_worker_stats
     end
