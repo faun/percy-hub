@@ -34,6 +34,13 @@
 # - Incremented by enqueue_jobs.
 # - Decremented by worker_job_complete. Once set, never deleted.
 #
+# subscription:<id>:usage:<year>:<month>:counter [Integer]
+#
+# - How many snapshots have been successfully processed per year/month tied to a subscription.
+#   The enforcement of limits is done by the Percy API, not Hub.
+# - Incremented by increment_monthly_usage.
+# - Never deleted. TODO: cleanup after some period of time.
+#
 # build:<id>:subscription_id [Integer]
 #
 # - Subscription ID so we can get from a build to its subscription limit and active locks.
@@ -112,6 +119,14 @@
 # - Items added by set_worker_idle (called by the worker).
 # - Items deleted by schedule_jobs after job is scheduled, and permanently by remove_worker.
 #
+# workers:heartbeat [Sorted Set]
+#
+# - All the currently idle workers, scored by the timestamp of the last heartbeat.
+# - Items added by worker_heartbeat (run every second by each worker).
+# - Item scores are read by watch_workers. If a score is lagging behind in time, it is a signal
+#   that the worker is no longer actually online and was not shutdown properly.
+# - Items deleted by remove_worker.
+#
 # machines:created:counter [Integer]
 #
 # - The all-time count of machines created.
@@ -137,6 +152,9 @@ module Percy
     DEFAULT_TIMEOUT_SECONDS = 5
 
     attr_accessor :_heard_interrupt
+
+    class Error < Exception; end
+    class DeadWorkerError < Percy::Hub::Error; end
 
     def run(command:)
       case command.to_sym
@@ -387,13 +405,32 @@ module Percy
       end
     end
 
+    def worker_heartbeat(worker_id:)
+      stats.increment('hub.workers.heartbeat')
+
+      # Fail if worker is no longer online. This shouldn't be possible, but we want to avoid
+      # a race where a heartbeat is added after the worker is removed and we never cleanup the key.
+      machine_id = redis.zscore('workers:online', worker_id)
+      raise Percy::Hub::DeadWorkerError if !machine_id
+
+      redis.zadd('workers:heartbeat', Time.now.to_i, worker_id)
+    end
+
+    # Finds workers who have not sent a heartbeat in older_than_seconds number of seconds p.
+    def list_workers_by_heartbeat(older_than_seconds:)
+      time_ago = Time.now.to_i - older_than_seconds
+      redis.zrangebyscore('workers:heartbeat', '-inf', time_ago)
+    end
+
     # Removes a worker and associated keys, and pushes any orphaned jobs into jobs:orphaned.
     # Should be called when worker is shutdown.
     def remove_worker(worker_id:)
       stats.time('hub.methods.remove_worker') do
+        Percy.logger.info("[worker:#{worker_id}] Shutting down...")
         keys = [
           'workers:online',
           'workers:idle',
+          'workers:heartbeat',
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
           'jobs:orphaned',
@@ -542,6 +579,7 @@ module Percy
 
     def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
+      raise Percy::Hub::DeadWorkerError if !machine_id
       redis.zadd('workers:idle', machine_id, worker_id)
       _record_worker_stats
     end

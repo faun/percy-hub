@@ -24,6 +24,10 @@ module Percy
         options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
         @redis ||= Redis.new(options)
       end
+
+      def reset_redis_connection
+        @redis = nil
+      end
     end
   end
 end

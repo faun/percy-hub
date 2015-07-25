@@ -6,5 +6,12 @@ RSpec.describe Percy::Hub::RedisService do
       expect(hub.redis).to be
     end
   end
+  describe '#reset_redis_connection' do
+    it 'clears the instance variable' do
+      old_redis = hub.redis
+      hub.reset_redis_connection
+      expect(hub.redis).to_not eq(old_redis)
+    end
+  end
 end
 

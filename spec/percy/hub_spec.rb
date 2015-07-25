@@ -276,16 +276,41 @@ RSpec.describe Percy::Hub do
       expect { hub.register_worker(machine_id: nil) }.to raise_error(ArgumentError)
     end
   end
+  describe '#worker_heartbeat' do
+    it 'sets the worker score in workers:heartbeat to the current time' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.worker_heartbeat(worker_id: worker_id)
+      expect(hub.redis.zscore('workers:heartbeat', worker_id)).to be_within(1).of(Time.now.to_i)
+    end
+    it 'fails if worker is not online' do
+      expect do
+        hub.worker_heartbeat(worker_id: 123)
+      end.to raise_error(Percy::Hub::DeadWorkerError)
+    end
+  end
+  describe '#list_workers_by_heartbeat' do
+    it 'finds worker heartbeats older than some number of seconds' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.worker_heartbeat(worker_id: worker_id)
+
+      expect(hub.list_workers_by_heartbeat(older_than_seconds: 0)).to eq([worker_id.to_s])
+      expect(hub.list_workers_by_heartbeat(older_than_seconds: 1)).to eq([])
+      expect(hub.list_workers_by_heartbeat(older_than_seconds: 10)).to eq([])
+    end
+  end
   describe '#remove_worker' do
     it 'removes worker related keys' do
       worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: worker_id)
+      hub.worker_heartbeat(worker_id: worker_id)
       expect(hub.redis.zscore('workers:online', worker_id)).to be
       expect(hub.redis.zscore('workers:idle', worker_id)).to be
+      expect(hub.redis.zscore('workers:heartbeat', worker_id)).to be
 
       hub.remove_worker(worker_id: worker_id)
       expect(hub.redis.zscore('workers:online', worker_id)).to_not be
       expect(hub.redis.zscore('workers:idle', worker_id)).to_not be
+      expect(hub.redis.zscore('workers:heartbeat', worker_id)).to_not be
     end
     it 'pushes orphaned jobs from worker:<id>:runnable into jobs:orphaned' do
       worker_id = hub.register_worker(machine_id: machine_id)
@@ -465,6 +490,11 @@ RSpec.describe Percy::Hub do
 
       hub._clear_worker_idle(worker_id: worker_id)
       expect(hub.redis.zscore('workers:idle', worker_id)).to be_nil
+    end
+    it 'fails if worker is not online' do
+      expect do
+        hub.set_worker_idle(worker_id: 123)
+      end.to raise_error(Percy::Hub::DeadWorkerError)
     end
   end
   describe '#_record_worker_stats' do

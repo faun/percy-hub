@@ -3,13 +3,40 @@ require 'percy/hub'
 module Percy
   class Hub
     class Worker
-      def run(times: nil, hub: nil, &block)
+      HEARTBEAT_SLEEP_SECONDS = 1
+
+      def hub
+        @hub ||= Percy::Hub.new
+      end
+
+      def reset_hub
+        @hub = nil
+      end
+
+      def run_heartbeat_thread(worker_id:)
+        Thread.new do
+          begin
+            # Grab our own hub instance here, do not re-use the main hub instance so we can have our
+            # own Redis connection.
+            heartbeat_hub = Percy::Hub.new
+            loop do
+              heartbeat_hub.worker_heartbeat(worker_id: worker_id)
+              sleep HEARTBEAT_SLEEP_SECONDS
+            end
+          rescue
+            # Slightly dumb, but catch all exceptions (possibly Redis timeouts) and spawn a new
+            # thread, then exit. Also sleep first, in case we are caught in a failure loop.
+            sleep HEARTBEAT_SLEEP_SECONDS
+            run_heartbeat_thread
+          end
+        end
+      end
+
+      def run(times: nil, &block)
         raise ArgumentError.new('block must be given') if !block_given?
 
         begin
-          hub ||= Percy::Hub.new
-
-          # Catch SIGINT and SIGTERM and trigger gracefully shutdown after the job completes.
+          # Catch SIGINT and SIGTERM and trigger graceful shutdown after the job completes.
           heard_interrupt = false
           Signal.trap(:INT) do
             puts 'Quitting...'
@@ -19,6 +46,7 @@ module Percy
 
           Percy.logger.info("[worker] Registering...")
           worker_id = hub.register_worker(machine_id: ENV['PERCY_WORKER_MACHINE_ID'] || 1)
+          run_heartbeat_thread(worker_id: worker_id)
 
           Percy.logger.info("[worker:#{worker_id}] Ready! Waiting for jobs.")
 
@@ -55,7 +83,7 @@ module Percy
                 rescue Exception => e
                   # Capture and ignore all errors.
                   Percy.logger.error("[JOB_ERROR] #{e.class.name}: #{e.message}")
-                  Percy.logger.debug(e.backtrace.join("\n"))
+                  Percy.logger.error(e.backtrace.join("\n"))
                   failed = true
                 end
               end
@@ -63,24 +91,21 @@ module Percy
               raise NotImplementedError.new("Unhandled job type: #{action}")
             end
 
-            _graceful_cleanup_worker(hub: hub, worker_id: worker_id, failed: failed)
+            _graceful_cleanup_worker(worker_id: worker_id, failed: failed)
           end
         rescue Exception => e
-          # If an exception gets to here, it's probably a Redis error. Attempt gracefully shutdown
-          # and cleanup with a new Redis connection through a new Hub object.
-          hub = Percy::Hub.new
-          _graceful_cleanup_worker(hub: hub, worker_id: worker_id, failed: true)
-
+          # Fail! Probably a RedisTimeout. Don't do any cleanup/retry here, let hub cleanup after
+          # this worker stops heartbeating. We do this so we can use the same cleanup/retry logic
+          # for this soft failure as we do for hard failures, such as this process being SIGKILLd.
           Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
-          Percy.logger.debug(e.backtrace.join("\n"))
+          Percy.logger.error(e.backtrace.join("\n"))
+          raise e
         end
-
-        # Shutdown gracefully.
-        Percy.logger.info("[worker:#{worker_id}] Shutting down...")
-        hub.remove_worker(worker_id: worker_id)
+        # We do not cleanup the worker here, it is cleaned up by the hub itself. It is safe to leave
+        # the worker "online" here because it is not idle, so no work will be scheduled to it.
       end
 
-      def _graceful_cleanup_worker(hub:, worker_id:, failed:)
+      def _graceful_cleanup_worker(worker_id:, failed:)
         current_job_id = hub.worker_job_complete(worker_id: worker_id)
         if current_job_id && failed
           # Insert the job to be retried immediately if failed.
