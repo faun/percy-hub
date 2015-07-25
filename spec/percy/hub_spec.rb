@@ -456,11 +456,6 @@ RSpec.describe Percy::Hub do
       hub.worker_job_complete(worker_id: worker_id)
       expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 10)).to eq([])
     end
-    it 'releases a subscription lock' do
-      expect(hub.redis.get('subscription:345:locks:active')).to eq('1')
-      hub.worker_job_complete(worker_id: worker_id)
-      expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
-    end
     it 'returns nil if no job was running' do
       expect(hub.stats).to_not receive(:increment)
       expect(hub.worker_job_complete(worker_id: 999)).to be_nil
@@ -499,6 +494,18 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:data')).to be_nil
       expect(hub.redis.get('job:1:build_id')).to be_nil
       expect(hub.redis.get('job:1:subscription_id')).to be_nil
+    end
+    it 'releases a subscription lock' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+      hub.wait_for_job(worker_id: worker_id)
+
+      expect(hub.redis.get('subscription:345:locks:active')).to eq('1')
+      hub.cleanup_job(job_id: 1)
+      expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
     end
   end
   describe '#get_monthly_usage' do

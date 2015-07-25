@@ -32,7 +32,7 @@
 #
 # - The current number of locks in use. This is limited to the subscription concurrency_limit.
 # - Incremented by enqueue_jobs.
-# - Decremented by worker_job_complete. Once set, never deleted.
+# - Decremented by cleanup_job. Once set, never deleted.
 #
 # subscription:<id>:usage:<year>:<month>:counter [Integer]
 #
@@ -187,7 +187,7 @@ module Percy
           snapshot_id = Random.rand(1001..2000)
         end
         insert_job(
-          insert_job: "process_snapshot:#{snapshot_id}",
+          job_data: "process_snapshot:#{snapshot_id}",
           build_id: build_id,
           subscription_id: subscription_id,
         )
@@ -465,14 +465,14 @@ module Percy
       end
 
       # Dead workers may have had jobs on them. Retry the jobs (plus 10 extra buffer so we
-      # work through the list if any exist).
+      # work through the orphaned jobs if any exist).
       orphaned_job_ids = redis.lrange('jobs:orphaned', 0, dead_worker_ids.length + 10)
       orphaned_job_ids.each do |orphaned_job_id|
         retry_job(job_id: orphaned_job_id)
         cleanup_job(job_id: orphaned_job_id)
       end
 
-      return 5  # Sleep
+      return 5  # Sleep.
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.
@@ -560,10 +560,6 @@ module Percy
       job_id = redis.rpop("worker:#{worker_id}:running")
       return if !job_id
 
-      # Release the subscription lock that was added by enqueue_jobs.
-      subscription_id = redis.get("job:#{job_id}:subscription_id")
-      redis.decr("subscription:#{subscription_id}:locks:active")
-
       # Record that we just completed a job.
       stats.increment('hub.jobs.completed')
 
@@ -585,6 +581,10 @@ module Percy
 
     def cleanup_job(job_id:)
       stats.time('hub.methods.cleanup_job') do
+        # Release the subscription lock that was added by enqueue_jobs.
+        subscription_id = redis.get("job:#{job_id}:subscription_id")
+        redis.decr("subscription:#{subscription_id}:locks:active")
+
         redis.del("job:#{job_id}:data")
         redis.del("job:#{job_id}:build_id")
         redis.del("job:#{job_id}:subscription_id")

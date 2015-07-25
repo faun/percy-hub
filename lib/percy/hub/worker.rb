@@ -91,7 +91,19 @@ module Percy
               raise NotImplementedError.new("Unhandled job type: #{action}")
             end
 
-            _graceful_cleanup_worker(worker_id: worker_id, failed: failed)
+            hub.worker_job_complete(worker_id: worker_id)
+            if failed
+              retried_job_id = hub.retry_job(job_id: job_id)
+              Percy.logger.warn do
+                "[worker:#{worker_id}] Job #{job_id} failed, retried as job #{retried_job_id}"
+              end
+            end
+            hub.cleanup_job(job_id: job_id)
+
+            Percy.logger.info do
+              "[worker:#{worker_id}] Finished with job #{job_id} " +
+              "(#{failed && 'failed' || 'success'})"
+            end
           end
         rescue Exception => e
           # Fail! Probably a RedisTimeout. Don't do any cleanup/retry here, let hub cleanup after
@@ -103,26 +115,6 @@ module Percy
         end
         # We do not cleanup the worker here, it is cleaned up by the hub itself. It is safe to leave
         # the worker "online" here because it is not idle, so no work will be scheduled to it.
-      end
-
-      def _graceful_cleanup_worker(worker_id:, failed:)
-        current_job_id = hub.worker_job_complete(worker_id: worker_id)
-        if current_job_id && failed
-          # Insert the job to be retried immediately if failed.
-          # TODO(fotinakis): this is slightly dangerous and might cause infinite failure loops,
-          # though they'd still be subscription rate limited. Consider adding counts and delays.
-          retried_job_id = hub.retry_job(job_id: current_job_id)
-          Percy.logger.warn do
-            "[worker:#{worker_id}] Job #{current_job_id} failed, retried as job #{retried_job_id}"
-          end
-        end
-        if current_job_id
-          hub.cleanup_job(job_id: current_job_id)
-          Percy.logger.info do
-            "[worker:#{worker_id}] Finished with job #{current_job_id} " +
-            "(#{failed && 'failed' || 'success'})"
-          end
-        end
       end
     end
   end
