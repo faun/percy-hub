@@ -123,9 +123,9 @@
 #
 # - All the currently idle workers, scored by the timestamp of the last heartbeat.
 # - Items added by worker_heartbeat (run every second by each worker).
-# - Item scores are read by watch_workers. If a score is lagging behind in time, it is a signal
+# - Item scores are read by reap_workers. If a score is lagging behind in time, it is a signal
 #   that the worker is no longer actually online and was not shutdown properly.
-# - Items deleted by remove_worker.
+# - Items deleted by remove_worker, called by reap_workers.
 #
 # machines:created:counter [Integer]
 #
@@ -149,7 +149,9 @@ module Percy
   class Hub
     include Percy::Hub::RedisService
 
+    MACHINE_CONCURRENCY = 5
     DEFAULT_TIMEOUT_SECONDS = 5
+    DEFAULT_WORKER_REAP_SECONDS = 10
 
     attr_accessor :_heard_interrupt
 
@@ -162,9 +164,12 @@ module Percy
         enqueue_jobs
       when :scheduler
         schedule_jobs
+      when :worker_reaper
+        reap_workers
       when :solo
         fork { enqueue_jobs }
         fork { schedule_jobs }
+        fork { reap_workers }
         begin
           Process.waitall
         rescue Interrupt
@@ -405,7 +410,7 @@ module Percy
       end
     end
 
-    def worker_heartbeat(worker_id:)
+    def worker_heartbeat(worker_id:, offset_seconds: nil)
       stats.increment('hub.workers.heartbeat')
 
       # Fail if worker is no longer online. This shouldn't be possible, but we want to avoid
@@ -413,7 +418,7 @@ module Percy
       machine_id = redis.zscore('workers:online', worker_id)
       raise Percy::Hub::DeadWorkerError if !machine_id
 
-      redis.zadd('workers:heartbeat', Time.now.to_i, worker_id)
+      redis.zadd('workers:heartbeat', Time.now.to_i + (offset_seconds || 0), worker_id)
     end
 
     # Finds workers who have not sent a heartbeat in older_than_seconds number of seconds p.
@@ -423,10 +428,10 @@ module Percy
     end
 
     # Removes a worker and associated keys, and pushes any orphaned jobs into jobs:orphaned.
-    # Should be called when worker is shutdown.
+    # Should be called when worker is reaped.
     def remove_worker(worker_id:)
       stats.time('hub.methods.remove_worker') do
-        Percy.logger.info("[worker:#{worker_id}] Shutting down...")
+        Percy.logger.info("[hub] Removing worker #{worker_id}")
         keys = [
           'workers:online',
           'workers:idle',
@@ -443,6 +448,31 @@ module Percy
         _record_worker_stats
         result
       end
+    end
+
+    def reap_workers
+      Percy.logger.info { '[hub:worker_reaper] Watching workers...' }
+      infinite_loop_with_graceful_shutdown do
+        sleep(_reap_workers)
+      end
+      Percy.logger.info { '[hub:worker_reaper] Quit' }
+    end
+
+    def _reap_workers(older_than_seconds: DEFAULT_WORKER_REAP_SECONDS)
+      dead_worker_ids = list_workers_by_heartbeat(older_than_seconds: older_than_seconds)
+      dead_worker_ids.each do |dead_worker_id|
+        remove_worker(worker_id: dead_worker_id)
+      end
+
+      # Dead workers may have had jobs on them. Retry the jobs (plus 10 extra buffer so we
+      # work through the list if any exist).
+      orphaned_job_ids = redis.lrange('jobs:orphaned', 0, dead_worker_ids.length + 10)
+      orphaned_job_ids.each do |orphaned_job_id|
+        retry_job(job_id: orphaned_job_id)
+        cleanup_job(job_id: orphaned_job_id)
+      end
+
+      return 5  # Sleep
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.

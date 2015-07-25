@@ -282,6 +282,11 @@ RSpec.describe Percy::Hub do
       hub.worker_heartbeat(worker_id: worker_id)
       expect(hub.redis.zscore('workers:heartbeat', worker_id)).to be_within(1).of(Time.now.to_i)
     end
+    it 'accepts an offset' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.worker_heartbeat(worker_id: worker_id, offset_seconds: 10)
+      expect(hub.redis.zscore('workers:heartbeat', worker_id)).to_not be_within(1).of(Time.now.to_i)
+    end
     it 'fails if worker is not online' do
       expect do
         hub.worker_heartbeat(worker_id: 123)
@@ -338,6 +343,47 @@ RSpec.describe Percy::Hub do
       hub.remove_worker(worker_id: worker_id)
       expect(hub.redis.exists("worker:#{worker_id}:running")).to eq(false)
       expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq(['1'])
+    end
+  end
+  describe '#_reap_workers' do
+    it 'removes workers that have not sent a heartbeat recently' do
+      dead_worker_id = hub.register_worker(machine_id: machine_id)
+      alive_worker_id = hub.register_worker(machine_id: machine_id)
+
+      hub.worker_heartbeat(worker_id: dead_worker_id)
+      hub.worker_heartbeat(worker_id: alive_worker_id, offset_seconds: 10)
+
+      all_worker_ids = [dead_worker_id.to_s, alive_worker_id.to_s]
+      expect(hub.redis.zrange('workers:online', 0, 10)).to eq(all_worker_ids)
+
+      expect(hub._reap_workers(older_than_seconds: 0)).to eq(5)
+      expect(hub.redis.zrange('workers:online', 0, 10)).to eq([alive_worker_id.to_s])
+    end
+    it 'schedules orphaned jobs' do
+      # Create a dead worker with a job in worker:<id>:running.
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.worker_heartbeat(worker_id: worker_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+      hub.wait_for_job(worker_id: worker_id)
+
+      # Create a dead worker with a job in worker:<id>:runnable.
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.worker_heartbeat(worker_id: worker_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+
+      expect(hub.redis.get('job:1:data')).to be
+      expect(hub.redis.get('job:2:data')).to be
+      expect(hub._reap_workers(older_than_seconds: 0)).to eq(5)
+      expect(hub.redis.get('job:1:data')).to_not be
+      expect(hub.redis.get('job:2:data')).to_not be
+      expect(hub.redis.get('job:3:data')).to be
+      expect(hub.redis.get('job:4:data')).to be
     end
   end
   describe '#_schedule_next_job' do
