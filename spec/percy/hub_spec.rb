@@ -463,12 +463,6 @@ RSpec.describe Percy::Hub do
       expect(hub.stats).to_not receive(:increment)
       expect(hub.worker_job_complete(worker_id: 999)).to be_nil
     end
-    it 'records stats if successful' do
-      expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original
-      expect(hub.stats).to receive(:gauge)
-        .once.with('hub.jobs.completed.alltime', '1').and_call_original
-      hub.worker_job_complete(worker_id: worker_id)
-    end
   end
   describe '#retry_job' do
     it 'inserts a new job with the same job data' do
@@ -509,6 +503,15 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('subscription:345:locks:active')).to eq('1')
       hub.cleanup_job(job_id: 1)
       expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
+    end
+    it 'records stats' do
+      job_id = hub.insert_job(job_data: 'process_snapshot:123', build_id: 234, subscription_id: 345)
+
+      expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original
+      expect(hub.stats).to receive(:gauge)
+        .once.with('hub.jobs.completed.alltime', 1).and_call_original
+
+      hub.cleanup_job(job_id: job_id)
     end
   end
   describe '#get_monthly_usage' do

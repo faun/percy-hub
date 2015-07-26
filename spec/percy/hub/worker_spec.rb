@@ -50,20 +50,19 @@ RSpec.describe Percy::Hub::Worker do
     it 'fails if not given a block' do
       expect { worker.run }.to raise_error(ArgumentError)
     end
-    it 'silently captures exceptions and retries the job as a new job' do
+    it 'raises exceptions and exits, waits for reaping' do
       thread = Thread.new do
-        worker.run(times: 1) do |action, options|
-          raise Exception
-        end
+        expect do
+          worker.run(times: 1) do |action, options|
+            raise RuntimeError
+          end
+        end.to raise_error(RuntimeError)
       end
 
       wait_until_any_worker_is_running
       insert_and_schedule_random_job
-      expect(hub.redis.get('job:1:data')).to be
-
       thread.join(1)
-      expect(hub.redis.get('job:1:data')).to_not be
-      expect(hub.redis.get('job:2:data')).to be
+      expect(hub.redis.get('job:1:data')).to be  # Data is not cleaned up, will be reaped.
     end
     it 'removes idle status when re-hooking after wait_for_job' do
       failhub = Percy::Hub.new

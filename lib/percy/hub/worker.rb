@@ -46,13 +46,13 @@ module Percy
 
           Percy.logger.info("[worker] Registering...")
           worker_id = hub.register_worker(machine_id: ENV['PERCY_WORKER_MACHINE_ID'] || 1)
-          run_heartbeat_thread(worker_id: worker_id)
+          heartbeat_thread = run_heartbeat_thread(worker_id: worker_id)
 
           Percy.logger.info("[worker:#{worker_id}] Ready! Waiting for jobs.")
 
           count = 0
           loop do
-            # Every time a job completes or wait_for_job times out (regularly), check if we should stop.
+            # Exit if we heard a SIGTERM.
             break if heard_interrupt
 
             # Exit if we've exceeded times, but only if times is set (infinite loop otherwise).
@@ -60,9 +60,10 @@ module Percy
             break if times && count > times
 
             hub.set_worker_idle(worker_id: worker_id)
-            job_id = hub.wait_for_job(worker_id: worker_id)
 
-            # Handle regular timeouts from wait_for_job and restart.
+            # If no job is scheduled, this will block for DEFAULT_WAIT_TIME seconds then return nil.
+            # We handle these regular timeouts, clear our idle status, and then start over.
+            job_id = hub.wait_for_job(worker_id: worker_id)
             if !job_id
               hub.clear_worker_idle(worker_id: worker_id)
               next
@@ -74,51 +75,33 @@ module Percy
             # Assumes a particular format for job_data, might need to be adapted for other jobs.
             action, action_id = job_data.split(':')
             action = action.to_sym
-            action_id = Integer(action_id)
 
-            failed = false
             case action
             when :process_snapshot
-              options = {snapshot_id: action_id}
+              options = {snapshot_id: Integer(action_id)}
               hub.stats.time('hub.jobs.completed.process_snapshot') do
-                begin
-                  yield(action, options)
-                rescue Exception => e
-                  # Capture and ignore all errors.
-                  Percy.logger.error("[JOB_ERROR] #{e.class.name}: #{e.message}")
-                  Percy.logger.error(e.backtrace.join("\n"))
-                  failed = true
-                end
+                yield(action, options)
               end
             else
               raise NotImplementedError.new("Unhandled job type: #{action}")
             end
 
+            # Success!
             hub.worker_job_complete(worker_id: worker_id)
-            if failed
-              retried_job_id = hub.retry_job(job_id: job_id)
-              Percy.logger.warn do
-                "[worker:#{worker_id}] Job #{job_id} failed, retried as job #{retried_job_id}"
-              end
-            end
             hub.cleanup_job(job_id: job_id)
 
-            Percy.logger.info do
-              "[worker:#{worker_id}] Finished with job #{job_id} " +
-              "(#{failed && 'failed' || 'success'})"
-            end
+            Percy.logger.info { "[worker:#{worker_id}] Finished job #{job_id} successfully." }
           end
         rescue Exception => e
-          # Fail! Probably a RedisTimeout. Don't do any cleanup/retry here, let hub cleanup after
-          # this worker stops heartbeating. We do this so we can use the same cleanup/retry logic
-          # for this soft failure as we do for hard failures, such as this process being SIGKILLd.
+          # Fail! Don't do any cleanup/retry here, let hub cleanup after this worker stops
+          # heartbeating. We do this so we can use the same exact cleanup/retry logic for all
+          # failures, soft or hard (such as being SIGKILLed).
           Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
           Percy.logger.error(e.backtrace.join("\n"))
           raise e
+        ensure
+          heartbeat_thread.kill
         end
-        # We do not cleanup the worker here, it is cleaned up by the hub itself. It is safe to leave
-        # the worker "online" here because it is not idle, so no work will be scheduled to it.
-        hub.clear_worker_idle(worker_id: worker_id)
       end
     end
   end

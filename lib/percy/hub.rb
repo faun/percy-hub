@@ -62,7 +62,7 @@
 # jobs:completed:counter [Integer]
 #
 # - An all-time counter of jobs completed (without regard to success).
-# - Incremented on each worker_job_complete call.
+# - Incremented on each cleanup_job call.
 # - Never deleted.
 #
 # jobs:runnable [List]
@@ -155,8 +155,12 @@ module Percy
   class Hub
     include Percy::Hub::RedisService
 
-    MACHINE_CONCURRENCY = 5
+    # The default blocking time for certain "hot" loops that wait on BRPOPLPUSH calls.
     DEFAULT_TIMEOUT_SECONDS = 5
+
+    # The number of seconds since a worker last sent a heartbeat before we reap it.
+    # This is also effectively the amount of time before a dead job will be rescheduled,
+    # since dead workers do not cleanup their jobs.
     DEFAULT_WORKER_REAP_SECONDS = 10
 
     attr_accessor :_heard_interrupt
@@ -476,6 +480,7 @@ module Percy
       max_orphaned_jobs.times do
         orphaned_job_id = redis.lpop('jobs:orphaned')
         break if !orphaned_job_id
+
         retry_job(job_id: orphaned_job_id)
         cleanup_job(job_id: orphaned_job_id)
       end
@@ -559,23 +564,13 @@ module Percy
       redis.get("job:#{job_id}:data")
     end
 
-    # Marks the worker's current job as complete and releases the subscription lock.
+    # Marks the worker's current job as complete.
     #
     # @return [nil, Integer]
     #   - `nil` when there was no job to mark complete
     #   - the job ID otherwise
     def worker_job_complete(worker_id:)
-      job_id = redis.rpop("worker:#{worker_id}:running")
-      return if !job_id
-
-      # Record that we just completed a job.
-      stats.increment('hub.jobs.completed')
-
-      # Increment the global jobs completed counter and record the number of alltime completed jobs.
-      completed_counter = redis.incr('jobs:completed:counter')
-      stats.gauge('hub.jobs.completed.alltime', job_id)
-
-      job_id
+      redis.rpop("worker:#{worker_id}:running")
     end
 
     def retry_job(job_id:)
@@ -583,15 +578,24 @@ module Percy
       job_data = redis.get("job:#{job_id}:data")
       build_id = redis.get("job:#{job_id}:build_id")
       subscription_id = redis.get("job:#{job_id}:subscription_id")
-
       insert_job(job_data: job_data, build_id: build_id, subscription_id: subscription_id)
     end
 
+    # Full job cleanup, including releasing subscription lock, deleting job data, and recording
+    # stats. It is assumed that the job is complete (regardless of status) and that retries have
+    # already been handled by this point.
     def cleanup_job(job_id:)
       stats.time('hub.methods.cleanup_job') do
         # Release the subscription lock that was added by enqueue_jobs.
         subscription_id = redis.get("job:#{job_id}:subscription_id")
         redis.decr("subscription:#{subscription_id}:locks:active")
+
+        # Record that we just completed a job.
+        stats.increment('hub.jobs.completed')
+
+        # Increment the global alltime completed counter and record a the stat for it.
+        completed_counter = redis.incr('jobs:completed:counter')
+        stats.gauge('hub.jobs.completed.alltime', job_id)
 
         redis.del("job:#{job_id}:data")
         redis.del("job:#{job_id}:build_id")
