@@ -22,6 +22,10 @@ module Percy
           },
         }
         options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
+
+        # Use the hiredis to avoid crazy threading/ruby segfault problems.
+        options[:driver] = :hiredis
+
         @redis ||= Redis.new(options)
       end
 
