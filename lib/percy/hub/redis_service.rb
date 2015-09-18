@@ -27,6 +27,7 @@ module Percy
       end
 
       def reset_redis_connection
+        @redis.disconnect! if @redis
         @redis = nil
       end
     end

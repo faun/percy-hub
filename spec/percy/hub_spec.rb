@@ -444,6 +444,16 @@ RSpec.describe Percy::Hub do
         .and_return(nil)
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
     end
+    it 'returns nil if a redis timeout occurs' do
+      expect(hub.redis).to receive(:brpoplpush)
+        .with(
+          "worker:#{worker_id}:runnable",
+          "worker:#{worker_id}:running",
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS
+        )
+        .and_raise(Redis::TimeoutError)
+      expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
+    end
   end
   describe '#worker_job_complete' do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }

@@ -552,11 +552,15 @@ module Percy
     #   - the job data otherwise
     def wait_for_job(worker_id:, timeout: nil)
       timeout = timeout || DEFAULT_TIMEOUT_SECONDS
-      result = redis.brpoplpush(
-        "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
+      begin
+        result = redis.brpoplpush(
+          "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
+      rescue Redis::TimeoutError
+        reset_redis_connection
+        return
+      end
       return if !result
       # redis.set("worker:#{worker_id}:last")
-
       result
     end
 
