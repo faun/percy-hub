@@ -13,18 +13,15 @@ module Percy
           # instead of a Redis server directly, we need to tune TCP keepalives so that HAProxy
           # can know when to reap connections. These are coordinated with the haproxy.cfg settings.
           #
-          # Set Redis TCP connections to send the first keepalive after 5 seconds of inactivity
-          # and every 5 seconds thereafter, and 2 unacknowledged probes will kill the connection.
+          # Set Redis TCP connections to send the first keepalive after 4 seconds of inactivity
+          # and every 4 seconds thereafter, and 4 unacknowledged probes will kill the connection.
           tcp_keepalive: {
-            time: 5,
-            intvl: 5,
-            probes: 2,
+            time: 4,
+            intvl: 4,
+            probes: 4,
           },
         }
         options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
-
-        # Use the hiredis to avoid crazy threading/ruby segfault problems.
-        options[:driver] = :hiredis
 
         @redis ||= Redis.new(options)
       end

@@ -19,7 +19,6 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   spec.add_dependency 'redis', '~> 3.2'
-  spec.add_dependency 'hiredis', '~> 0.6'
   spec.add_dependency 'dogstatsd-ruby', '~> 1.5'
   spec.add_dependency 'syslog-logger', '~> 1.6'
 
