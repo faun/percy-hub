@@ -100,7 +100,7 @@ module Percy
           Percy.logger.error(e.backtrace.join("\n"))
           raise e
         ensure
-          heartbeat_thread.kill
+          heartbeat_thread && heartbeat_thread.kill
         end
       end
     end
