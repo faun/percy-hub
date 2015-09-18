@@ -3,7 +3,7 @@ require 'percy/hub'
 module Percy
   class Hub
     class Worker
-      HEARTBEAT_SLEEP_SECONDS = 1
+      HEARTBEAT_SLEEP_SECONDS = 2
 
       def hub
         @hub ||= Percy::Hub.new
