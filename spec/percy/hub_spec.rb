@@ -566,6 +566,27 @@ RSpec.describe Percy::Hub do
       end.to raise_error(Percy::Hub::DeadWorkerError)
     end
   end
+  describe '#get_all_subscription_data' do
+    it 'returns an empty hash if no data is present' do
+      expect(hub.get_all_subscription_data).to eq({})
+    end
+    it 'returns a hash of subscription_id to usage data' do
+      hub.increment_monthly_usage(subscription_id: 345)
+      hub.increment_monthly_usage(subscription_id: 346, count: 90)
+
+      expect(hub.get_all_subscription_data).to eq({
+        '345' => '1',
+        '346' => '90',
+      })
+    end
+    it 'supports year and month arguments' do
+      hub.increment_monthly_usage(subscription_id: 345)
+      year = Time.now.strftime('%Y')
+      month = Time.now.strftime('%m')
+      expect(hub.get_all_subscription_data(year: year, month: month)).to eq({'345' => '1'})
+      expect(hub.get_all_subscription_data(year: 1960, month: 12)).to eq({})
+    end
+  end
   describe '#_record_worker_stats' do
     it 'records the number of workers online (0) and idle (0)' do
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 0)

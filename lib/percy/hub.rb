@@ -617,8 +617,9 @@ module Percy
 
     def increment_monthly_usage(subscription_id:, count: nil)
       stats.time('hub.methods.increment_monthly_usage') do
-        year = Time.now.strftime('%Y')
-        month = Time.now.strftime('%m')
+        now = Time.now
+        year = now.strftime('%Y')
+        month = now.strftime('%m')
         redis.incrby("subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1)
       end
     end
@@ -633,6 +634,18 @@ module Percy
     def clear_worker_idle(worker_id:)
       redis.zrem('workers:idle', worker_id)
       _record_worker_stats
+    end
+
+    def get_all_subscription_data(year: nil, month: nil)
+      now = Time.now
+      year ||= now.strftime('%Y')
+      month ||= now.strftime('%m')
+
+      keys = redis.keys("subscription:*:usage:#{year}:#{month}:counter")
+      return {} if keys.empty?  # Stupid MGET doesn't support empty arrays.
+
+      subscription_data = redis.mapped_mget(*keys)
+      Hash[subscription_data.map { |k, v| [/subscription:(.*):usage:/.match(k)[1], v] }]
     end
 
     def _record_worker_stats
