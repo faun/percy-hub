@@ -258,6 +258,11 @@ module Percy
           "[hub] Inserted job #{job_id}, build #{build_id}, " +
           "subscription #{subscription_id}: #{job_data}"
         end
+
+        # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
+        # A spike in insert_job calls can quickly consume our connection limits.
+        disconnect_redis
+
         job_id
       end
     end
@@ -556,7 +561,7 @@ module Percy
         result = redis.brpoplpush(
           "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
       rescue Redis::TimeoutError
-        reset_redis_connection
+        disconnect_redis
         return
       end
       return if !result
@@ -611,7 +616,14 @@ module Percy
       stats.time('hub.methods.get_monthly_usage') do
         year = Time.now.strftime('%Y')
         month = Time.now.strftime('%m')
-        Integer(redis.get("subscription:#{subscription_id}:usage:#{year}:#{month}:counter") || 0)
+
+        usage = redis.get("subscription:#{subscription_id}:usage:#{year}:#{month}:counter")
+        usage = Integer(usage || 0)
+
+        # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
+        disconnect_redis
+
+        usage
       end
     end
 
@@ -620,7 +632,13 @@ module Percy
         now = Time.now
         year = now.strftime('%Y')
         month = now.strftime('%m')
-        redis.incrby("subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1)
+        result = redis.incrby(
+          "subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1)
+
+        # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
+        disconnect_redis
+
+        result
       end
     end
 

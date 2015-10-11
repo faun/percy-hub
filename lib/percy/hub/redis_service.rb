@@ -15,7 +15,7 @@ module Percy
         @redis ||= Redis.new(options)
       end
 
-      def reset_redis_connection
+      def disconnect_redis
         @redis.disconnect! if @redis
         @redis = nil
       end
