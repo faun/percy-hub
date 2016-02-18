@@ -90,7 +90,7 @@
 #
 # job:<id>:data [String]
 #
-# - Arbitrary job data. Right now just "process_snapshot:<id>".
+# - Arbitrary job data. Right now just "process_comparison:<id>".
 # - Added on every insert_job call.
 # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
 #
@@ -197,7 +197,7 @@ module Percy
           snapshot_id = Random.rand(1001..2000)
         end
         insert_job(
-          job_data: "process_snapshot:#{snapshot_id}",
+          job_data: "process_comparison:#{snapshot_id}",
           build_id: build_id,
           subscription_id: subscription_id,
         )
@@ -230,7 +230,7 @@ module Percy
 
       # Right now, enforce a single format for job_data because the worker also enforces it.
       raise ArgumentError.new(
-        'job_data must match process_snapshot:\d+') if !job_data.match(/\Aprocess_snapshot:\d+\Z/)
+        'job_data must match process_\w+:\d+') if !job_data.match(/\Aprocess_\w+:\d+\Z/)
 
       stats.time('hub.methods.insert_job') do
         # Increment the global jobs counter.

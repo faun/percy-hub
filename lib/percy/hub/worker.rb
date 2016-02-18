@@ -78,8 +78,14 @@ module Percy
 
             case action
             when :process_snapshot
+              # TODO: deprecated, delete this.
               options = {snapshot_id: Integer(action_id)}
               hub.stats.time('hub.jobs.completed.process_snapshot') do
+                yield(action, options)
+              end
+            when :process_comparison
+              options = {comparison_id: Integer(action_id)}
+              hub.stats.time('hub.jobs.completed.process_comparison') do
                 yield(action, options)
               end
             else
