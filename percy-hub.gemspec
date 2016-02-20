@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.summary       = %q{Percy::Hub}
   spec.description   = %q{}
   spec.homepage      = ''
-  spec.license       = ''
+  spec.license       = 'MIT'
 
   spec.files         = Dir['README.md', 'lib/**/*', 'bin/*']
   spec.executables   = spec.files.grep(%r{^bin/}) { |f| File.basename(f) }
