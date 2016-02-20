@@ -1,12 +1,14 @@
-# Percy Hub
+# Percy::Hub
+#
+# The master coordinator.
 #
 # NOTES:
 #
 # - Redis data is in-memory and expensive, so every variable should be strictly accounted for
 #   and cleaned up when no longer needed.
 # - Many of the algorithms below rely on Lua scripts, not for convenience, but because
-#   Lua scripts are executed atomically and serially block all Redis operations, so we can treat
-#   each script as being its own "transaction".
+#   Lua scripts are executed serially and block other Redis operations, so we can treat each script
+#   as a weak "transaction" (even though it's not technically atomic) for certain uses.
 #
 # REDIS KEYS:
 #
@@ -186,21 +188,6 @@ module Percy
           # When Ctrl-C'd, wait until children shutdown.
           Process.waitall
         end
-      when :insert_test_job
-        subscription_id = Random.rand(1..2)
-        case subscription_id
-        when 1
-          snapshot_id = Random.rand(1..1000)
-          build_id = Random.rand(1..3)
-        when 2
-          build_id = Random.rand(10..13)
-          snapshot_id = Random.rand(1001..2000)
-        end
-        insert_job(
-          job_data: "process_comparison:#{snapshot_id}",
-          build_id: build_id,
-          subscription_id: subscription_id,
-        )
       end
     end
 

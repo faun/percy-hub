@@ -2,9 +2,8 @@ PATH
   remote: .
   specs:
     percy-hub (0.0.1)
-      dogstatsd-ruby (~> 1.5)
-      redis (~> 3.2)
-      syslog-logger (~> 1.6)
+      percy-common (= 1.0.0)
+      redis (= 3.2.2)
 
 GEM
   remote: https://rubygems.org/
@@ -13,7 +12,7 @@ GEM
       timers (~> 4.0.0)
     coderay (1.1.0)
     diff-lcs (1.2.5)
-    dogstatsd-ruby (1.5.0)
+    dogstatsd-ruby (1.6.0)
     ffi (1.9.8)
     formatador (0.2.5)
     guard (2.12.6)
@@ -41,6 +40,9 @@ GEM
     notiffany (0.0.6)
       nenv (~> 0.1)
       shellany (~> 0.0)
+    percy-common (1.0.0)
+      dogstatsd-ruby (~> 1.6)
+      syslog-logger (~> 1.6)
     pry (0.10.1)
       coderay (~> 1.1.0)
       method_source (~> 0.8.1)
@@ -49,7 +51,7 @@ GEM
     rb-fsevent (0.9.5)
     rb-inotify (0.9.5)
       ffi (>= 0.5.0)
-    redis (3.2.1)
+    redis (3.2.2)
     rspec (3.2.0)
       rspec-core (~> 3.2.0)
       rspec-expectations (~> 3.2.0)

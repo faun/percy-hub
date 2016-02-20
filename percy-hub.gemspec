@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.version       = Percy::Hub::VERSION
   spec.authors       = ['Perceptual Inc.']
   spec.email         = ['team@percy.io']
-  spec.summary       = %q{Percy Hub}
+  spec.summary       = %q{Percy::Hub}
   spec.description   = %q{}
   spec.homepage      = ''
   spec.license       = ''
@@ -18,9 +18,8 @@ Gem::Specification.new do |spec|
   spec.test_files    = spec.files.grep(%r{^(test|spec|features)/})
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'redis', '~> 3.2'
-  spec.add_dependency 'dogstatsd-ruby', '~> 1.5'
-  spec.add_dependency 'syslog-logger', '~> 1.6'
+  spec.add_dependency 'redis', '3.2.2'
+  spec.add_dependency 'percy-common', '1.0.0'
 
   spec.add_development_dependency 'bundler', '~> 1.7'
   spec.add_development_dependency 'rake', '~> 10.0'

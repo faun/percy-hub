@@ -7,7 +7,6 @@ COMMANDS = [
   'schedule_jobs',
   'reap_workers',
   'solo',
-  'insert_test_job',
 ].freeze
 
 if ARGV.length != 1 || !COMMANDS.include?(ARGV[0])
