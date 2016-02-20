@@ -38,7 +38,7 @@
 #
 # subscription:<id>:usage:<year>:<month>:counter [Integer]
 #
-# - How many snapshots have been successfully processed per year/month tied to a subscription.
+# - How many snapshots have been successfully added per year/month tied to a subscription.
 #   The enforcement of limits is done by the Percy API, not Hub.
 # - Incremented by increment_monthly_usage.
 # - Never deleted. TODO: cleanup after some period of time.
@@ -333,9 +333,6 @@ module Percy
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
-              # Percy.logger.debug do
-              #   "[hub:enqueue_jobs] Concurrency limit hit, skipping jobs from build #{build_id}."
-              # end
               index += 1
               break
             when 'no_idle_worker'

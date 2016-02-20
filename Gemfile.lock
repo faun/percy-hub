@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    percy-hub (0.0.1)
+    percy-hub (1.0.0)
       percy-common (= 1.0.0)
       redis (= 3.2.2)
 
