@@ -412,6 +412,9 @@ RSpec.describe Percy::Hub do
       hub._enqueue_jobs
       hub.clear_worker_idle(worker_id: worker_id)
 
+      expect(hub.redis.llen('jobs:runnable')).to eq(1)
+      expect(hub.redis.llen('jobs:scheduling')).to eq(0)
+      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(0)
       expect(hub._schedule_next_job).to eq(1)
 
       # Idempotent check:
@@ -420,6 +423,26 @@ RSpec.describe Percy::Hub do
       # And back to success:
       hub.set_worker_idle(worker_id: worker_id)
       expect(hub._schedule_next_job).to eq(0)
+      expect(hub.redis.llen('jobs:runnable')).to eq(0)
+      expect(hub.redis.llen('jobs:scheduling')).to eq(0)
+      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(1)
+    end
+    it 'handles jobs that might be orphaned in jobs:scheduling' do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub.set_worker_idle(worker_id: worker_id)
+      hub._enqueue_jobs
+      expect(hub.redis.llen('jobs:runnable')).to eq(1)
+      expect(hub.redis.llen('jobs:scheduling')).to eq(0)
+
+      # Manually force the enqueued job into jobs:scheduling.
+      hub.redis.rpoplpush('jobs:runnable', 'jobs:scheduling')
+
+      expect(hub._schedule_next_job).to eq(0)
+
+      expect(hub.redis.llen('jobs:runnable')).to eq(0)
+      expect(hub.redis.llen('jobs:scheduling')).to eq(0)
+      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(1)
     end
   end
   describe '#wait_for_job' do

@@ -503,9 +503,18 @@ module Percy
     #
     # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
     def _schedule_next_job(timeout: nil)
+      # Handle orphaned jobs that might be stuck in jobs:scheduling. We assume that we are a single,
+      # non-concurrent task to schedule jobs, so there should be nothing in jobs:scheduling here
+      # and we can safely push them back into jobs:runnable if they exist.
+      max_handled_orphaned_jobs = 10
+      max_handled_orphaned_jobs.times do
+        orphaned_job = redis.rpoplpush('jobs:scheduling', 'jobs:runnable')
+        break if !orphaned_job
+      end
+
       # Block and wait to pop a job from runnable to scheduling.
       timeout = timeout || DEFAULT_TIMEOUT_SECONDS
-      job_id = redis.brpoplpush("jobs:runnable", "jobs:scheduling", timeout)
+      job_id = redis.brpoplpush('jobs:runnable', 'jobs:scheduling', timeout)
 
       # Hit timeout and did not schedule any jobs, return 0 sleeptime and start again. This timeout
       # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
@@ -549,7 +558,6 @@ module Percy
         return
       end
       return if !result
-      # redis.set("worker:#{worker_id}:last")
       result
     end
 
