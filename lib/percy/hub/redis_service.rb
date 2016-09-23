@@ -20,7 +20,7 @@ module Percy
       end
 
       def disconnect_redis
-        @redis.disconnect! if @redis
+        @redis.close if @redis
         @redis = nil
       end
     end
