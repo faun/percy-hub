@@ -659,8 +659,11 @@ module Percy
 
     def _record_worker_stats
       # Record an exact count of how many workers are online and idle.
-      stats.gauge('hub.workers.online', redis.zcard('workers:online'))
-      stats.gauge('hub.workers.idle', redis.zcard('workers:idle'))
+      workers_online_count = redis.zcard('workers:online')
+      workers_idle_count = redis.zcard('workers:idle')
+      stats.gauge('hub.workers.online', workers_online_count)
+      stats.gauge('hub.workers.idle', workers_idle_count)
+      stats.gauge('hub.workers.processing', workers_online_count - workers_idle_count)
       true
     end
 

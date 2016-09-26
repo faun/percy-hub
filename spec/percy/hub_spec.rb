@@ -621,12 +621,14 @@ RSpec.describe Percy::Hub do
     it 'records the number of workers online (0) and idle (0)' do
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 0)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 0)
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.processing', 0)
       hub._record_worker_stats
     end
     it 'records the number of workers online (1) and idle (0)' do
       hub.register_worker(machine_id: machine_id)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 1)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 0)
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.processing', 1)
       hub._record_worker_stats
     end
     it 'records the number of workers online (2) and idle (1)' do
@@ -635,6 +637,7 @@ RSpec.describe Percy::Hub do
 
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.online', 2)
       expect(hub.stats).to receive(:gauge).once.with('hub.workers.idle', 1)
+      expect(hub.stats).to receive(:gauge).once.with('hub.workers.processing', 1)
       hub._record_worker_stats
     end
   end
