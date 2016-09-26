@@ -548,6 +548,11 @@ RSpec.describe Percy::Hub do
 
       hub.cleanup_job(job_id: job_id)
     end
+    it 'returns false if no job exists to cleanup' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      expect(hub.cleanup_job(job_id: 1)).to eq(true)
+      expect(hub.cleanup_job(job_id: 1)).to eq(false)
+    end
   end
   describe '#get_monthly_usage' do
     it 'gets the current month subscription usage' do

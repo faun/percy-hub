@@ -478,7 +478,6 @@ module Percy
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.
-    #
     def schedule_jobs
       Percy.logger.info { '[hub:schedule_jobs] Waiting for jobs to schedule...' }
       infinite_loop_with_graceful_shutdown do
@@ -587,21 +586,21 @@ module Percy
     # already been handled by this point.
     def cleanup_job(job_id:)
       stats.time('hub.methods.cleanup_job') do
-        # Release the subscription lock that was added by enqueue_jobs.
         subscription_id = redis.get("job:#{job_id}:subscription_id")
-        redis.decr("subscription:#{subscription_id}:locks:active")
+        return false if !subscription_id
+        keys = [
+          "subscription:#{subscription_id}:locks:active",
+          "job:#{job_id}:data",
+          "job:#{job_id}:build_id",
+          "job:#{job_id}:subscription_id",
+        ]
+        _run_script('cleanup_job.lua', keys: keys)
 
-        # Record that we just completed a job.
-        stats.increment('hub.jobs.completed')
-
-        # Increment the global alltime completed counter and record a the stat for it.
-        completed_counter = redis.incr('jobs:completed:counter')
+        # Record completed alltime jobs stats and that we just completed a job.
         stats.gauge('hub.jobs.completed.alltime', job_id)
-
-        redis.del("job:#{job_id}:data")
-        redis.del("job:#{job_id}:build_id")
-        redis.del("job:#{job_id}:subscription_id")
+        stats.increment('hub.jobs.completed')
       end
+      true
     end
 
     def get_monthly_usage(subscription_id:)
