@@ -591,12 +591,12 @@ module Percy
       job_data = redis.get("job:#{job_id}:data")
       build_id = redis.get("job:#{job_id}:build_id")
       subscription_id = redis.get("job:#{job_id}:subscription_id")
-      num_retries = redis.get("job:#{job_id}:num_retries")
+      num_retries = get_job_num_retries(job_id: job_id)
       insert_job(
         job_data: job_data,
         build_id: build_id,
         subscription_id: subscription_id,
-        num_retries: Integer(num_retries) + 1,
+        num_retries: num_retries + 1,
       )
     end
 

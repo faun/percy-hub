@@ -541,6 +541,11 @@ RSpec.describe Percy::Hub do
       expect(hub.retry_job(job_id: 2)).to eq(3)
       expect(Integer(hub.redis.get('job:3:num_retries'))).to eq(2)
     end
+    it 'handles backwards-compatibility with no num_retries key existing' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub.redis.del('job:1:num_retries')
+      expect(hub.retry_job(job_id: 1)).to eq(2)
+    end
   end
   describe '#cleanup_job' do
     it 'removes job related keys' do
