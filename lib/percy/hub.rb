@@ -108,6 +108,12 @@
 # - Added on every insert_job call.
 # - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
 #
+# job:<id>:num_retries [Integer]
+#
+# - The number of times this job has been retried.
+# - Set to zero by the first insert_job call, incremented when retry_job calls insert_job.
+# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+#
 # workers:created:counter [Integer]
 #
 # - The all-time count of workers created.
@@ -209,7 +215,7 @@ module Percy
     end
 
     # Inserts a new job.
-    def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil)
+    def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil, num_retries: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.
       raise ArgumentError.new('job_data is required') if !job_data
       raise ArgumentError.new('build_id is required') if !build_id
@@ -218,6 +224,8 @@ module Percy
       # Right now, enforce a single format for job_data because the worker also enforces it.
       raise ArgumentError.new(
         'job_data must match process_\w+:\d+') if !job_data.match(/\Aprocess_\w+:\d+\Z/)
+
+      num_retries ||= 0
 
       stats.time('hub.methods.insert_job') do
         # Increment the global jobs counter.
@@ -230,11 +238,13 @@ module Percy
           "job:#{job_id}:data",
           "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
+          "job:#{job_id}:num_retries",
         ]
         args = [
           job_id,
           build_id,
           subscription_id,
+          num_retries,
           inserted_at || Time.now.to_i,
           job_data,
         ]
@@ -383,8 +393,6 @@ module Percy
       stats.time('hub.methods.start_machine') do
         machine_id = redis.incr('machines:created:counter')
         stats.gauge('hub.machines.created.alltime', machine_id)
-
-        # TODO: actually start machine.
 
         redis.set("machine:#{machine_id}:started_at", Time.now.to_i)
         redis.expire("machine:#{machine_id}:started_at", 86400)
@@ -564,6 +572,11 @@ module Percy
       redis.get("job:#{job_id}:data")
     end
 
+    def get_job_num_retries(job_id:)
+      # TODO: this is backwards compatible with no num_retries key, eventually we can clean this up.
+      Integer(redis.get("job:#{job_id}:num_retries") || 0)
+    end
+
     # Marks the worker's current job as complete.
     #
     # @return [nil, Integer]
@@ -578,7 +591,13 @@ module Percy
       job_data = redis.get("job:#{job_id}:data")
       build_id = redis.get("job:#{job_id}:build_id")
       subscription_id = redis.get("job:#{job_id}:subscription_id")
-      insert_job(job_data: job_data, build_id: build_id, subscription_id: subscription_id)
+      num_retries = redis.get("job:#{job_id}:num_retries")
+      insert_job(
+        job_data: job_data,
+        build_id: build_id,
+        subscription_id: subscription_id,
+        num_retries: Integer(num_retries) + 1,
+      )
     end
 
     # Full job cleanup, including releasing subscription lock, deleting job data, and recording
@@ -593,6 +612,7 @@ module Percy
           "job:#{job_id}:data",
           "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
+          "job:#{job_id}:num_retries",
         ]
         _run_script('cleanup_job.lua', keys: keys)
 

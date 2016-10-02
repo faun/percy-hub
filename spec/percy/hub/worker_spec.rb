@@ -44,7 +44,7 @@ RSpec.describe Percy::Hub::Worker do
       thread.join(1)
 
       expect(got_action).to eq(:process_comparison)
-      expect(got_options).to eq({comparison_id: 123})
+      expect(got_options).to eq({comparison_id: 123, num_retries: 0})
 
     end
     it 'fails if not given a block' do

@@ -37,6 +37,7 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:data')).to eq('process_comparison:123')
       expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
       expect(hub.redis.get('job:1:build_id').to_i).to eq(234)
+      expect(hub.redis.get('job:1:num_retries').to_i).to eq(0)
     end
     it 'is idempotent and re-uses the inserted_at score if present' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
@@ -68,6 +69,21 @@ RSpec.describe Percy::Hub do
       expect do
         hub.insert_job(job_data: 'bad-action-name:123', build_id: 234, subscription_id: 345)
       end.to raise_error(ArgumentError)
+    end
+  end
+  describe '#get_job_data' do
+    it 'returns the arbitrary job data' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      expect(hub.get_job_data(job_id: 1)).to eq('process_comparison:123')
+    end
+  end
+  describe '#get_job_num_retries' do
+    it 'returns the num_retries for job' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      expect(hub.get_job_num_retries(job_id: 1)).to eq(0)
+    end
+    it 'safely handles when num_retries does not exist (legacy backwards-compatibility)' do
+      expect(hub.get_job_num_retries(job_id: 1)).to eq(0)
     end
   end
   describe '#_enqueue_jobs' do
@@ -507,10 +523,23 @@ RSpec.describe Percy::Hub do
 
       # Make sure insert_job gets called correctly, so then we can weakly check some data.
       expect(hub).to receive(:insert_job)
-        .once.with(job_data: 'process_comparison:123', build_id: '234', subscription_id: '345')
+        .once.with(
+          job_data: 'process_comparison:123',
+          build_id: '234',
+          subscription_id: '345',
+          num_retries: 1,
+        )
         .and_call_original
       expect(hub.retry_job(job_id: 1)).to eq(2)
       expect(hub.redis.get('job:2:data')).to be
+    end
+    it 'increments num_retries each time a job is retried' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      expect(Integer(hub.redis.get('job:1:num_retries'))).to eq(0)
+      expect(hub.retry_job(job_id: 1)).to eq(2)
+      expect(Integer(hub.redis.get('job:2:num_retries'))).to eq(1)
+      expect(hub.retry_job(job_id: 2)).to eq(3)
+      expect(Integer(hub.redis.get('job:3:num_retries'))).to eq(2)
     end
   end
   describe '#cleanup_job' do
@@ -519,12 +548,14 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:data')).to be
       expect(hub.redis.get('job:1:build_id')).to be
       expect(hub.redis.get('job:1:subscription_id')).to be
+      expect(hub.redis.get('job:1:num_retries')).to be
 
       expect(hub.stats).to receive(:time).once.with('hub.methods.cleanup_job').and_call_original
       hub.cleanup_job(job_id: 1)
       expect(hub.redis.get('job:1:data')).to be_nil
       expect(hub.redis.get('job:1:build_id')).to be_nil
       expect(hub.redis.get('job:1:subscription_id')).to be_nil
+      expect(hub.redis.get('job:1:num_retries')).to be_nil
     end
     it 'releases a subscription lock' do
       worker_id = hub.register_worker(machine_id: machine_id)

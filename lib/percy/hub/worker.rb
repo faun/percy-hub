@@ -76,9 +76,10 @@ module Percy
             action, action_id = job_data.split(':')
             action = action.to_sym
 
+            options = {num_retries: hub.get_job_num_retries(job_id: job_id)}
             case action
             when :process_comparison
-              options = {comparison_id: Integer(action_id)}
+              options[:comparison_id] = Integer(action_id)
               hub.stats.time('hub.jobs.completed.process_comparison') do
                 yield(action, options)
               end
