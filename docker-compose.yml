@@ -1,0 +1,19 @@
+# For dev/test.
+version: '2'
+services:
+  redis:
+    image: redis:alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - ./tmp/docker/redis:/data
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Override bundle flags so that development/test dependencies are installed.
+        - BUNDLE_INSTALL_FLAGS=--jobs 5
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
