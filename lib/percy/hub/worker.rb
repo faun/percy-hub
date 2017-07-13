@@ -69,8 +69,8 @@ module Percy
               next
             end
 
-            Percy.logger.info("[worker:#{worker_id}] Running job #{job_id}")
             job_data = hub.get_job_data(job_id: job_id)
+            Percy.logger.info("[worker:#{worker_id}] Running job:#{job_id} (#{job_data})")
 
             # Assumes a particular format for job_data, might need to be adapted for other jobs.
             action, action_id = job_data.split(':')
@@ -91,7 +91,9 @@ module Percy
             hub.worker_job_complete(worker_id: worker_id)
             hub.cleanup_job(job_id: job_id)
 
-            Percy.logger.info { "[worker:#{worker_id}] Finished job #{job_id} successfully." }
+            Percy.logger.info do
+              "[worker:#{worker_id}] Finished job:#{job_id} successfully (#{job_data})."
+            end
           end
         rescue Exception => e
           # Fail! Don't do any cleanup/retry here, let hub cleanup after this worker stops
