@@ -495,18 +495,7 @@ module Percy
     end
 
     # A single iteration of the schedule_jobs algorithm which blocks and waits for a job in
-    # jobs:runnable, then schedules it on an idle worker.
-    #
-    # Preference is given to idle workers with lower machine IDs. The machine-number score ensures
-    # that we preference scheduling to idle workers on the oldest machines, so when demand lessens
-    # newer machines will become more uniformly idle and be able to be shutdown. If we simply picked
-    # a random available worker from any machine, we could easily keep triggering many machines to
-    # stay up for a limited demand.
-    #
-    # This preference will not have adverse effects on utilization since workers can only have one
-    # job at a time, so load will evenly spread over all the workers and then block. If there are
-    # enough jobs being pumped into jobs:runnable, all workers on all machines will be utilized
-    # at maximum, but when load slows workers will become idle from newest to oldest.
+    # jobs:runnable, then schedules it on an idle worker. Load is distributed randomly.
     #
     # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
     def _schedule_next_job(timeout: nil)
@@ -527,8 +516,8 @@ module Percy
       # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
       return 0 if !job_id
 
-      # Find an idle worker to schedule the job on.
-      worker_id = redis.zrange('workers:idle', 0, 0).first
+      # Find a random idle worker to schedule the job on.
+      worker_id = redis.zrange('workers:idle', 0, -1).sample
       if !worker_id
         # There are no idle workers. This should not happen because enqueue_jobs should ensure
         # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle

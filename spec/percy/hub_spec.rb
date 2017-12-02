@@ -407,7 +407,7 @@ RSpec.describe Percy::Hub do
     end
   end
   describe '#_schedule_next_job' do
-    it 'returns 0 and pops job from jobs:runnable to the first idle worker' do
+    it 'returns 0 and pops job from jobs:runnable to an idle worker' do
       first_worker_id = hub.register_worker(machine_id: machine_id)
       second_worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: second_worker_id)
