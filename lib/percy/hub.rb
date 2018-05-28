@@ -126,6 +126,16 @@
 # - Items added by register_worker.
 # - Items deleted by remove_worker.
 #
+# worker:<id>:runnable
+# - Worker-specific job ID that has been scheduled.
+# - Items are added by _schedule_next_job when the worker has been identified as idle.
+# - Items are moved from runnable to running by wait_for_job.
+#
+# worker:<id>:running
+# - Worker-specific job ID that is running.
+# - Items are moved from worker:<id>:runnable to running by wait_for_job.
+# - Items are removed by worker_job_complete or remove_worker.
+#
 # workers:idle [Sorted Set]
 #
 # - All the currently idle workers, scored by machine ID. Jobs are scheduled on the lowest
@@ -405,6 +415,7 @@ module Percy
       stats.time('hub.methods.register_worker') do
         worker_id = redis.incr('workers:created:counter')
         redis.zadd('workers:online', machine_id, worker_id)
+        worker_heartbeat(worker_id: worker_id)
         _record_worker_stats
 
         # Record the time between machine creation and worker registration.
@@ -428,7 +439,7 @@ module Percy
       redis.zadd('workers:heartbeat', Time.now.to_i + (offset_seconds || 0), worker_id)
     end
 
-    # Finds workers who have not sent a heartbeat in older_than_seconds number of seconds p.
+    # Finds workers who have not sent a heartbeat in older_than_seconds number of seconds.
     def list_workers_by_heartbeat(older_than_seconds:)
       time_ago = Time.now.to_i - older_than_seconds
       redis.zrangebyscore('workers:heartbeat', '-inf', time_ago)

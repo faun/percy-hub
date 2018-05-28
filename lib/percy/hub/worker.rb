@@ -84,7 +84,8 @@ module Percy
                 yield(action, options)
               end
             else
-              raise NotImplementedError.new("Unhandled job type: #{action}")
+              # TODO: temporarily commented out to release some old stuck jobs.
+              # raise NotImplementedError.new("Unhandled job type: #{action}")
             end
 
             # Success!
