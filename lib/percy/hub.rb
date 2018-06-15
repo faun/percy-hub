@@ -181,6 +181,10 @@ module Percy
     # since dead workers do not cleanup their jobs.
     DEFAULT_WORKER_REAP_SECONDS = 10
 
+    # The amount of time a build will remain in builds:active before being allowed to time out
+    # and being cleaned up. Default: 12 hours
+    DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 43200
+
     attr_accessor :_heard_interrupt
 
     class Error < Exception; end
@@ -325,6 +329,7 @@ module Percy
         index = 0
         loop do
           build_id = redis.zrange('builds:active', index, index).first
+          build_inserted_at = redis.zscore('builds:active', build_id)
 
           # We've iterated through all the active builds and successfully checked and/or enqueued
           # all potential jobs for all idle workers. Sleep for a small amount of time before
@@ -347,8 +352,11 @@ module Percy
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
               stats.increment('hub.jobs.enqueuing.skipped.build_empty')
+
+              build_timeout_threshold = Time.now.to_i - DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS
+              remove_active_build(build_id: build_id) if build_inserted_at < build_timeout_threshold
+
               index += 1
-              remove_active_build(build_id: build_id)
               break
             when 'hit_lock_limit'
               # Concurrency limit hit, move on to the next build.
