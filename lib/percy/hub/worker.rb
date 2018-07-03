@@ -36,14 +36,6 @@ module Percy
         raise ArgumentError.new('block must be given') if !block_given?
 
         begin
-          # Catch SIGINT and SIGTERM and trigger graceful shutdown after the job completes.
-          heard_interrupt = false
-          Signal.trap(:INT) do
-            puts 'Quitting...'
-            heard_interrupt = true
-          end
-          Signal.trap(:TERM) { heard_interrupt = true }
-
           Percy.logger.info("[worker] Registering...")
           worker_id = hub.register_worker(machine_id: ENV['PERCY_WORKER_MACHINE_ID'] || 1)
           heartbeat_thread = run_heartbeat_thread(worker_id: worker_id)
@@ -52,9 +44,6 @@ module Percy
 
           count = 0
           loop do
-            # Exit if we heard a SIGTERM.
-            break if heard_interrupt
-
             # Exit if we've exceeded times, but only if times is set (infinite loop otherwise).
             count += 1
             break if times && count > times

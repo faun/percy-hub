@@ -552,8 +552,12 @@ module Percy
       clear_worker_idle(worker_id: worker_id)
 
       # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
-      redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
+      scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
       Percy.logger.info { "[hub:schedule_jobs] Scheduled job #{job_id} on worker #{worker_id}" }
+      Percy.logger.warn do
+        "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} but scheduled " +
+        "#{scheduled_job_id} instead"
+      end if scheduled_job_id != job_id
 
       return 0
     end
