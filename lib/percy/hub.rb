@@ -30,11 +30,13 @@
 # - Added by the main app when subscriptions change. Defaults to 2 if not set.
 # - Never deleted.
 #
-# subscription:<id>:locks:active [Integer]
+# subscription:<id>:locks:claimed [Sorted Set]
 #
-# - The current number of locks in use. This is limited to the subscription concurrency_limit.
-# - Incremented by enqueue_jobs.
-# - Decremented by cleanup_job. Once set, never deleted.
+# - The job IDs that are currently holding locks, scored by insertion timestamp.
+#   This is limited to the subscription concurrency_limit.
+# - Added by enqueue_jobs.
+# - Items removed by cleanup_job, or by release_orphaned_locks.
+#   Once this key exists, it is never deleted.
 #
 # subscription:<id>:usage:<year>:<month>:counter [Integer]
 #
@@ -184,6 +186,9 @@ module Percy
     # The amount of time a build will remain in builds:active before being allowed to time out
     # and being cleaned up. Default: 12 hours
     DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 43200
+
+    # The amount of time an orphaned lock will remain claimed before being released.
+    DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS = 43200
 
     attr_accessor :_heard_interrupt
 
@@ -339,6 +344,9 @@ module Percy
           # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
+          # Cleanup any expired locks for this subscription.
+          _release_expired_locks(subscription_id: subscription_id)
+
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
           loop do
             job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
@@ -379,16 +387,19 @@ module Percy
     end
 
     # One step of the above algorithm. Enqueue jobs from a build, constrained by the above limits.
-    def _enqueue_next_job(build_id:, subscription_id:)
+    def _enqueue_next_job(build_id:, subscription_id:, enqueued_at: nil)
       stats.time('hub.methods._enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
           "subscription:#{subscription_id}:locks:limit",
-          "subscription:#{subscription_id}:locks:active",
+          "subscription:#{subscription_id}:locks:claimed",
           'jobs:runnable',
           'workers:idle',
         ]
-        _run_script('enqueue_next_job.lua', keys: keys)
+        args = [
+          enqueued_at || Time.now.to_i,
+        ]
+        _run_script('enqueue_next_job.lua', keys: keys, args: args)
       end
     end
 
@@ -502,6 +513,22 @@ module Percy
       end
 
       return 5  # Sleep.
+    end
+
+    # Releases subscription locks older than the timeout, which are considered expired.
+    def _release_expired_locks(
+      subscription_id:,
+      older_than_seconds: DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS
+    )
+      time_ago = Time.now.to_i - older_than_seconds
+      num_locks_released = redis.zremrangebyscore(
+        "subscription:#{subscription_id}:locks:claimed",
+        '-inf',
+        time_ago,
+      )
+      stats.count('hub.jobs.enqueuing.locks.expired', num_locks_released)
+
+      num_locks_released
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.
@@ -620,13 +647,16 @@ module Percy
         subscription_id = redis.get("job:#{job_id}:subscription_id")
         return false if !subscription_id
         keys = [
-          "subscription:#{subscription_id}:locks:active",
+          "subscription:#{subscription_id}:locks:claimed",
           "job:#{job_id}:data",
           "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
           "job:#{job_id}:num_retries",
         ]
-        _run_script('cleanup_job.lua', keys: keys)
+        args = [
+          job_id,
+        ]
+        _run_script('cleanup_job.lua', keys: keys, args: args)
 
         # Record completed alltime jobs stats and that we just completed a job.
         stats.gauge('hub.jobs.completed.alltime', job_id)

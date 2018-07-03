@@ -2,6 +2,16 @@ RSpec.describe Percy::Hub do
   let(:hub) { Percy::Hub.new }
   let(:machine_id) { hub.start_machine }
 
+  def create_idle_test_workers(num_workers)
+    worker_ids = []
+    num_workers.times do
+      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.set_worker_idle(worker_id: worker_id)
+      worker_ids << worker_id
+    end
+    worker_ids
+  end
+
   describe '#set_subscription_locks_limit' do
     it 'inserts a snapshot job and updates relevant keys' do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
@@ -88,13 +98,7 @@ RSpec.describe Percy::Hub do
   end
   describe '#_enqueue_jobs' do
     context 'with idle workers available' do
-      before(:each) do
-        hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-        hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-        hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-        hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-        hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-      end
+      before(:each) { create_idle_test_workers(5) }
 
       it 'enqueues all jobs if enough idle workers and subscription locks' do
         hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
@@ -208,11 +212,13 @@ RSpec.describe Percy::Hub do
       expect(hub._enqueue_next_job(build_id: 234, subscription_id: 345)).to eq('no_idle_worker')
     end
     it 'returns hit_lock_limit when concurrency limit is exceeded (and defaults limit to 2)' do
-      hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-      hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
-      hub.set_worker_idle(worker_id: hub.register_worker(machine_id: machine_id))
+      worker_id_1, worker_id_2, worker_id_3 = create_idle_test_workers(3)
 
-      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      first_job_id = hub.insert_job(
+        job_data: 'process_comparison:123',
+        build_id: 234,
+        subscription_id: 345,
+      )
       hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
       hub.insert_job(job_data: 'process_comparison:125', build_id: 234, subscription_id: 345)
 
@@ -225,7 +231,8 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.llen('jobs:runnable')).to eq(2)
 
       # Release one of the subscription's locks and enqueue another job from the build.
-      hub.redis.decr('subscription:345:locks:active')
+      hub.cleanup_job(job_id: first_job_id)
+
       expect(hub._enqueue_next_job(build_id: 234, subscription_id: 345)).to eq(1)
       expect(hub.redis.llen('jobs:runnable')).to eq(3)
     end
@@ -424,6 +431,31 @@ RSpec.describe Percy::Hub do
       expect(hub._reap_workers(older_than_seconds: 0)).to eq(5)
     end
   end
+  describe '#_release_expired_locks' do
+    before(:each) { create_idle_test_workers(3) }
+
+    it 'releases locks that have expired' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+
+      enqueued_at = Time.now.to_i - Percy::Hub::DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS - 1
+      hub._enqueue_next_job(build_id: 234, subscription_id: 345, enqueued_at: enqueued_at)
+      hub._enqueue_next_job(build_id: 234, subscription_id: 345, enqueued_at: enqueued_at)
+      hub._enqueue_next_job(build_id: 234, subscription_id: 345) # Intetionally exclude enqueued_at.
+
+      expect(hub._release_expired_locks(subscription_id: 345)).to eq(2)
+    end
+    it 'does nothing when no locks exist' do
+      expect(hub._release_expired_locks(subscription_id: 345)).to eq(0)
+    end
+    it 'does nothing when locks exist but are not expired' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub._enqueue_next_job(build_id: 234, subscription_id: 345)
+
+      expect(hub._release_expired_locks(subscription_id: 345)).to eq(0)
+    end
+  end
   describe '#_schedule_next_job' do
     it 'returns 0 and pops job from jobs:runnable to an idle worker' do
       first_worker_id = hub.register_worker(machine_id: machine_id)
@@ -480,9 +512,9 @@ RSpec.describe Percy::Hub do
     end
   end
   describe '#wait_for_job' do
-    let(:worker_id) { hub.register_worker(machine_id: machine_id) }
+    let!(:worker_id) { create_idle_test_workers(1).first }
+
     it 'returns the next runnable job on the worker' do
-      hub.set_worker_idle(worker_id: worker_id)
       hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
       hub._enqueue_jobs
       hub._schedule_next_job
@@ -515,6 +547,7 @@ RSpec.describe Percy::Hub do
   end
   describe '#worker_job_complete' do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
+
     before(:each) do
       hub.set_worker_idle(worker_id: worker_id)
       hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
@@ -581,16 +614,15 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('job:1:num_retries')).to be_nil
     end
     it 'releases a subscription lock' do
-      worker_id = hub.register_worker(machine_id: machine_id)
+      worker_id = create_idle_test_workers(1).first
       hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
-      hub.set_worker_idle(worker_id: worker_id)
       hub._enqueue_jobs
       hub._schedule_next_job
       hub.wait_for_job(worker_id: worker_id)
 
-      expect(hub.redis.get('subscription:345:locks:active')).to eq('1')
+      expect(hub.redis.zcount('subscription:345:locks:claimed', '-inf', '+inf')).to eq(1)
       hub.cleanup_job(job_id: 1)
-      expect(hub.redis.get('subscription:345:locks:active')).to eq('0')
+      expect(hub.redis.zcount('subscription:345:locks:claimed', '-inf', '+inf')).to eq(0)
     end
     it 'records stats' do
       job_id = hub.insert_job(
