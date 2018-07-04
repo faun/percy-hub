@@ -184,11 +184,12 @@ module Percy
     DEFAULT_WORKER_REAP_SECONDS = 10
 
     # The amount of time a build will remain in builds:active before being allowed to time out
-    # and being cleaned up. Default: 12 hours
-    DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 43200
+    # and being cleaned up. Default: 5 hours
+    DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 18000
 
     # The amount of time an orphaned lock will remain claimed before being released.
-    DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS = 43200
+    # Default: 1 hour.
+    DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS = 3600
 
     attr_accessor :_heard_interrupt
 
