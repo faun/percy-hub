@@ -607,11 +607,19 @@ module Percy
       begin
         result = redis.brpoplpush(
           "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
+        return unless result
+
+        runnable_jobs = redis.lrange("worker:#{worker_id}:runnable", 0, 100)
+        running_jobs = redis.lrange("worker:#{worker_id}:running", 0, 100)
+        Percy.logger.info do
+          "[worker:#{worker_id}] Popped #{result} job into running queue " +
+          "(runnable: #{runnable_jobs}, running: #{running_jobs})"
+        end
       rescue Redis::TimeoutError
+        Percy.logger.info("[worker:#{worker_id}] Handling Redis::TimeoutError")
         disconnect_redis
         return
       end
-      return if !result
       result
     end
 
@@ -630,7 +638,9 @@ module Percy
     #   - `nil` when there was no job to mark complete
     #   - the job ID otherwise
     def worker_job_complete(worker_id:)
-      redis.rpop("worker:#{worker_id}:running")
+      result = redis.rpop("worker:#{worker_id}:running")
+      Percy.logger.info { "[worker:#{worker_id}] Popped #{result} from running queue" }
+      result
     end
 
     def retry_job(job_id:)
