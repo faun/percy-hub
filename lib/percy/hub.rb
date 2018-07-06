@@ -605,6 +605,15 @@ module Percy
     def wait_for_job(worker_id:, timeout: nil)
       timeout = timeout || DEFAULT_TIMEOUT_SECONDS
       begin
+        # Race condition handling: this worker thinks it is idle and is asking for another job, but
+        # it was previously given a job to handle. Pop all the running jobs back into runnable so
+        # they are picked up again. This happens in a real-world race condition: the BRPOPLPUSH
+        # is successful, but the timeout is reached at the same time and a job is moved into the
+        # :running queue but is not actually returned.
+        redis.llen("worker:#{worker_id}:running").times do
+          redis.rpoplpush("worker:#{worker_id}:running", "worker:#{worker_id}:runnable")
+        end
+
         result = redis.brpoplpush(
           "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
         return unless result

@@ -544,6 +544,37 @@ RSpec.describe Percy::Hub do
         .and_raise(Redis::TimeoutError)
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
     end
+    it 'returns already claimed job if a redis timeout and race occurs' do
+      # A job has been scheduled on this worker.
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      hub._enqueue_jobs
+      hub._schedule_next_job
+
+      expect(hub.redis).to receive(:brpoplpush).once do
+        # Simulate timeout race condition (this is a real regression test): the brpoplpush command
+        # is successful, but the timeout is reached at the same time and so a job is moved into
+        # the :running queue but is not actually returned by wait_for_job.
+        Percy::Hub.new.redis.brpoplpush(
+          "worker:#{worker_id}:runnable",
+          "worker:#{worker_id}:running",
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+        )
+        raise Redis::TimeoutError
+      end
+
+      # First time: we receive nil, but the job was actually pushed underneath.
+      expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
+      expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
+      expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
+
+      # Second time: we receive the job that we should have received the first time.
+      result = hub.wait_for_job(worker_id: worker_id)
+      expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
+      expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
+      expect(result).to eq('1')
+      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(0)
+      expect(hub.redis.lindex("worker:#{worker_id}:running", 0)).to eq('1')
+    end
   end
   describe '#worker_job_complete' do
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
