@@ -14,6 +14,7 @@ module Percy
           timeout: 20,
           connect_timeout: 20,
           reconnect_attempts: 2,
+          tcp_keepalive: 10,
         }
         options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
 
