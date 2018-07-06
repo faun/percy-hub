@@ -9,7 +9,8 @@ module Percy
           port: Integer(ENV['REDIS_PORT'] || 6379),
           db: Integer(ENV['REDIS_DB'] || 0),
 
-          # Don't wait forever if our Redis instance is down. Defaults are 5, 5, and 1.
+          # These need to be longer than the longest BRPOPLPUSH timeout.
+          # Defaults are 5, 5, and 1.
           timeout: 20,
           connect_timeout: 20,
           reconnect_attempts: 2,
