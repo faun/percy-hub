@@ -568,12 +568,9 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
 
       # Second time: we receive the job that we should have received the first time.
-      result = hub.wait_for_job(worker_id: worker_id)
+      expect(hub.wait_for_job(worker_id: worker_id)).to eq('1')
       expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
       expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
-      expect(result).to eq('1')
-      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(0)
-      expect(hub.redis.lindex("worker:#{worker_id}:running", 0)).to eq('1')
     end
   end
   describe '#worker_job_complete' do
