@@ -10,8 +10,8 @@ module Percy
           db: Integer(ENV['REDIS_DB'] || 0),
 
           # Don't wait forever if our Redis instance is down. Defaults are 5, 5, and 1.
-          timeout: 3,
-          connect_timeout: 3,
+          timeout: 20,
+          connect_timeout: 20,
           reconnect_attempts: 2,
         }
         options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
