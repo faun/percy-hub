@@ -85,6 +85,8 @@ module Percy
             end
           end
         rescue Exception => e
+          hub.stats.increment('hub.jobs.failed')
+
           # Fail! Don't do any cleanup/retry here, let hub cleanup after this worker stops
           # heartbeating. We do this so we can use the same exact cleanup/retry logic for all
           # failures, soft or hard (such as being SIGKILLed).
