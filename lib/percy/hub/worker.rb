@@ -76,7 +76,13 @@ module Percy
             action, action_id = job_data.split(':')
             action = action.to_sym
 
-            options = {num_retries: hub.get_job_num_retries(job_id: job_id)}
+            options = {
+              num_retries: hub.get_job_num_retries(job_id: job_id),
+              hub_job_id: job_id,
+
+              # Jobs can mutate this option to true to manually handle job lock releases.
+              takeover_job_release: false,
+            }
             case action
             when :process_comparison
               options[:comparison_id] = Integer(action_id)
@@ -89,7 +95,7 @@ module Percy
 
             # Success!
             hub.worker_job_complete(worker_id: worker_id)
-            hub.cleanup_job(job_id: job_id)
+            hub.release_job(job_id: job_id) unless options[:takeover_job_release]
 
             Percy.logger.info do
               "[worker:#{worker_id}] Finished job:#{job_id} successfully (#{job_data})."
@@ -101,8 +107,6 @@ module Percy
           # Fail! Don't do any cleanup/retry here, let hub cleanup after this worker stops
           # heartbeating. We do this so we can use the same exact cleanup/retry logic for all
           # failures, soft or hard (such as being SIGKILLed).
-          Percy.logger.error("[WORKER_ERROR] #{e.class.name}: #{e.message}")
-          Percy.logger.error(e.backtrace.join("\n"))
           raise e
         ensure
           heartbeat_thread && heartbeat_thread.kill

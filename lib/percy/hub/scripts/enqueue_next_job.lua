@@ -1,12 +1,26 @@
 local build_jobs_new_key = KEYS[1]
-local subscription_locks_limit_key = KEYS[2]
-local subscription_locks_claimed_key = KEYS[3]
-local jobs_runnable_key = KEYS[4]
-local workers_idle_key = KEYS[5]
+local global_locks_limit_key = KEYS[2]
+local global_locks_claimed_key = KEYS[3]
+local subscription_locks_limit_key = KEYS[4]
+local subscription_locks_claimed_key = KEYS[5]
+local jobs_runnable_key = KEYS[6]
+local workers_idle_key = KEYS[7]
 
 local now = ARGV[1]
 
--- Grab the subscription info.
+-- Global locks limit.
+-- Default locks limit of 10000 if not specified.
+local default_global_locks_limit = 10000
+local global_locks_limit = tonumber(redis.call('GET', global_locks_limit_key))
+global_locks_limit = global_locks_limit or default_global_locks_limit
+
+local num_active_global_locks = redis.call('ZCOUNT', global_locks_claimed_key, '-inf', '+inf')
+-- If the global concurrency limit has been hit, return.
+if num_active_global_locks >= global_locks_limit then
+  return 'hit_global_lock_limit'
+end
+
+-- Subscription locks limit.
 -- Default locks limit of 2 if not specified.
 local default_locks_limit = 2
 local subscription_locks_limit = tonumber(redis.call('GET', subscription_locks_limit_key))
@@ -32,6 +46,7 @@ local job_id = redis.call('RPOPLPUSH', build_jobs_new_key, jobs_runnable_key)
 if job_id then
   -- Claim a lock. The score is the current time, ie. when the lock was claimed.
   redis.call('ZADD', subscription_locks_claimed_key, now, job_id)
+  redis.call('ZADD', global_locks_claimed_key, now, job_id)
 
   -- There was a job enqueued from this build.
   return 1

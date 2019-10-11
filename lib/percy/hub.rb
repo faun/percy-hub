@@ -24,6 +24,20 @@
 # - Deleted by remove_active_build which is called when the last job is popped by enqueue_jobs.
 #   The last job is simply the last we've received, not necessarily the last ever for the build.
 #
+# global:locks:limit [Integer]
+#
+# - The global concurrency limit across all subscriptions.
+# - Set dynamically by the API as scaling changes. Defaults to 10000 if not set.
+# - Never deleted.
+#
+# global:locks:claimed [Sorted Set]
+#
+# - The job IDs that are currently holding locks, scored by insertion timestamp.
+#   The size of this is weakly limited by global:locks:limit.
+# - Added by enqueue_jobs.
+# - Items removed by release_job, or by _release_expired_global_locks.
+#   Once this key exists, it is never deleted.
+#
 # subscription:<id>:locks:limit [Integer]
 #
 # - The concurrency limit of the subscription. Managed by the API app, not Hub.
@@ -35,7 +49,7 @@
 # - The job IDs that are currently holding locks, scored by insertion timestamp.
 #   This is limited to the subscription concurrency_limit.
 # - Added by enqueue_jobs.
-# - Items removed by cleanup_job, or by release_orphaned_locks.
+# - Items removed by release_job, or by _release_expired_locks.
 #   Once this key exists, it is never deleted.
 #
 # subscription:<id>:usage:<year>:<month>:counter [Integer]
@@ -66,7 +80,7 @@
 # jobs:completed:counter [Integer]
 #
 # - An all-time counter of jobs completed (without regard to success).
-# - Incremented on each cleanup_job call.
+# - Incremented on each release_job call.
 # - Never deleted.
 #
 # jobs:runnable [List]
@@ -96,25 +110,25 @@
 #
 # - Arbitrary job data. Right now just "process_comparison:<id>".
 # - Added on every insert_job call.
-# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+# - Deleted by release_job, which should be called by the worker when successful or giving up.
 #
 # job:<id>:subscription_id [Integer]
 #
 # - The subscription ID of the build associated to this job.
 # - Added on every insert_job call.
-# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+# - Deleted by release_job, which should be called by the worker when successful or giving up.
 #
 # job:<id>:build_id [Integer]
 #
 # - The job's build ID.
 # - Added on every insert_job call.
-# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+# - Deleted by release_job, which should be called by the worker when successful or giving up.
 #
 # job:<id>:num_retries [Integer]
 #
 # - The number of times this job has been retried.
 # - Set to zero by the first insert_job call, incremented when retry_job calls insert_job.
-# - Deleted by cleanup_job, which should be called by the worker when successful or giving up.
+# - Deleted by release_job, which should be called by the worker when successful or giving up.
 #
 # workers:created:counter [Integer]
 #
@@ -217,21 +231,34 @@ module Percy
       end
     end
 
+    private def script_shas
+      @script_shas ||= {}
+    end
+
     def stats
       @stats ||= Percy::Stats.new
     end
 
-    def set_subscription_locks_limit(subscription_id:, limit:)
-      stats.time('hub.methods.set_subscription_locks_limit') do
-        limit = Integer(limit)  # Sanity check.
-        redis.set("subscription:#{subscription_id}:locks:limit", limit)
-      end
+    def get_global_locks_limit
+      Integer(redis.get("global:locks:limit") || 10000)
+    end
+
+    def set_global_locks_limit(limit:)
+      limit = Integer(limit)  # Sanity check.
+      redis.set("global:locks:limit", limit)
     end
 
     def get_subscription_locks_limit(subscription_id:)
-      stats.time('hub.methods.get_subscription_locks_limit') do
-        Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
-      end
+      Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
+    end
+
+    def set_subscription_locks_limit(subscription_id:, limit:)
+      limit = Integer(limit)  # Sanity check.
+      redis.set("subscription:#{subscription_id}:locks:limit", limit)
+    end
+
+    def get_subscription_locks_limit(subscription_id:)
+      Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
     end
 
     # Inserts a new job.
@@ -356,6 +383,7 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
+              _record_global_locks_stats
               Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
               next
             when 0
@@ -367,8 +395,14 @@ module Percy
 
               index += 1
               break
+            when 'hit_global_lock_limit'
+              # Global concurrency limit hit. Don't attempt to schedule more work.
+              # Sleep for this amount of time waiting for a worker before checking again.
+              stats.increment('hub.jobs.enqueuing.skipped.hit_global_lock_limit')
+              _record_global_locks_stats
+              return 1
             when 'hit_lock_limit'
-              # Concurrency limit hit, move on to the next build.
+              # Subscription concurrency limit hit, move on to the next build.
               stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
               index += 1
               break
@@ -392,6 +426,8 @@ module Percy
       stats.time('hub.methods._enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
+          "global:locks:limit",
+          "global:locks:claimed",
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:claimed",
           'jobs:runnable',
@@ -510,26 +546,37 @@ module Percy
         break if !orphaned_job_id
 
         retry_job(job_id: orphaned_job_id)
-        cleanup_job(job_id: orphaned_job_id)
+        release_job(job_id: orphaned_job_id)
       end
 
       return 5  # Sleep.
     end
 
-    # Releases subscription locks older than the timeout, which are considered expired.
+    # Releases locks older than the timeout, which are considered expired.
     def _release_expired_locks(
       subscription_id:,
       older_than_seconds: DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS
     )
       time_ago = Time.now.to_i - older_than_seconds
-      num_locks_released = redis.zremrangebyscore(
+      jobs_with_expired_locks = redis.zrangebyscore(
         "subscription:#{subscription_id}:locks:claimed",
         '-inf',
         time_ago,
       )
-      stats.count('hub.jobs.enqueuing.locks.expired', num_locks_released)
+      return 0 unless jobs_with_expired_locks
 
-      num_locks_released
+      # Release expired locks.
+      #
+      # NOTE: we intentionally do not cleanup job data here, leaving that to workers when
+      # jobs finish or workers are reaped. Locks are decoupled and behave independently, and in
+      # rare cases will need to be released when they expire, whether or not job data exists.
+      jobs_with_expired_locks.each do |job_id|
+        # This requires the subscription_id to avoid relying on job data existing.
+        _release_locks_only(subscription_id: subscription_id, job_id: job_id)
+      end
+
+      stats.count('hub.jobs.enqueuing.locks.expired', jobs_with_expired_locks.length)
+      jobs_with_expired_locks.length
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.
@@ -599,9 +646,9 @@ module Percy
 
     # Block and wait until the timeout for the next runnable job for a specific worker.
     #
-    # @return [nil, String]
+    # @return [nil, Integer]
     #   - `nil` when the operation timed out
-    #   - the job data otherwise
+    #   - the job ID otherwise
     def wait_for_job(worker_id:, timeout: nil)
       timeout = timeout || DEFAULT_TIMEOUT_SECONDS
       begin
@@ -629,7 +676,7 @@ module Percy
         disconnect_redis
         return
       end
-      result
+      Integer(result)
     end
 
     def get_job_data(job_id:)
@@ -666,14 +713,15 @@ module Percy
       )
     end
 
-    # Full job cleanup, including releasing subscription lock, deleting job data, and recording
-    # stats. It is assumed that the job is complete (regardless of status) and that retries have
+    # Full job cleanup, including releasing locks, deleting job data, and recording stats.
+    # It is assumed that the job is complete (regardless of status) and that retries have
     # already been handled by this point.
-    def cleanup_job(job_id:)
-      stats.time('hub.methods.cleanup_job') do
+    def release_job(job_id:)
+      stats.time('hub.methods.release_job') do
         subscription_id = redis.get("job:#{job_id}:subscription_id")
         return false if !subscription_id
         keys = [
+          "global:locks:claimed",
           "subscription:#{subscription_id}:locks:claimed",
           "job:#{job_id}:data",
           "job:#{job_id}:build_id",
@@ -683,11 +731,27 @@ module Percy
         args = [
           job_id,
         ]
-        _run_script('cleanup_job.lua', keys: keys, args: args)
+        _run_script('release_job.lua', keys: keys, args: args)
 
         # Record completed alltime jobs stats and that we just completed a job.
         stats.gauge('hub.jobs.completed.alltime', job_id)
         stats.increment('hub.jobs.completed')
+        _record_global_locks_stats
+      end
+      true
+    end
+
+    def _release_locks_only(subscription_id:, job_id:)
+      stats.time('hub.methods.release_locks') do
+        keys = [
+          "global:locks:claimed",
+          "subscription:#{subscription_id}:locks:claimed",
+        ]
+        args = [
+          job_id,
+        ]
+        _run_script('release_locks.lua', keys: keys, args: args)
+        _record_global_locks_stats
       end
       true
     end
@@ -746,6 +810,11 @@ module Percy
       Hash[subscription_data.map { |k, v| [/subscription:(.*):usage:/.match(k)[1], v] }]
     end
 
+    def _record_global_locks_stats
+      stats.gauge('hub.global.locks.limit', get_global_locks_limit)
+      stats.gauge('hub.global.locks.claimed', redis.zcount('global:locks:claimed', '-inf', '+inf'))
+    end
+
     def _record_worker_stats
       # Record an exact count of how many workers are online and idle.
       workers_online_count = redis.zcard('workers:online')
@@ -756,9 +825,15 @@ module Percy
       true
     end
 
-    def _run_script(name, keys:, args: nil)
+    def _load_script_sha(name)
+      return script_shas[name] if script_shas[name]
+
       script = File.read(File.expand_path("../hub/scripts/#{name}", __FILE__))
-      redis.eval(script, keys: keys, argv: args)
+      script_shas[name] = redis.script(:load, script)
+    end
+
+    def _run_script(name, keys:, args: nil)
+      redis.evalsha(_load_script_sha(name), keys: keys, argv: args)
     end
 
     def infinite_loop_with_graceful_shutdown(&block)
