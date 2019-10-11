@@ -96,9 +96,11 @@ RSpec.describe Percy::Hub do
       expect do
         hub.insert_job(snapshot_id: nil, build_id: 234, subscription_id: 345)
       end.to raise_error(ArgumentError)
+
       expect do
         hub.insert_job(job_data: 'process_comparison:123', build_id: nil, subscription_id: 345)
       end.to raise_error(ArgumentError)
+
       expect do
         hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: nil)
       end.to raise_error(ArgumentError)
@@ -807,32 +809,6 @@ RSpec.describe Percy::Hub do
     end
   end
 
-  describe '#get_monthly_usage' do
-    it 'gets the current month subscription usage' do
-      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(0)
-      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
-      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(1)
-      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(2)
-      expect(hub.get_monthly_usage(subscription_id: 345)).to eq(2)
-    end
-  end
-
-  describe '#increment_monthly_usage' do
-    it 'increments a per-month counter for the subscription' do
-      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
-      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(2)
-
-      year = Time.now.strftime('%Y')
-      month = Time.now.strftime('%m')
-      expect(hub.redis.get("subscription:345:usage:#{year}:#{month}:counter")).to eq('2')
-    end
-
-    it 'accepts an increment count' do
-      expect(hub.increment_monthly_usage(subscription_id: 345)).to eq(1)
-      expect(hub.increment_monthly_usage(subscription_id: 345, count: 90)).to eq(91)
-    end
-  end
-
   describe '#clear_worker_idle and #set_worker_idle' do
     it 'adds or removes worker from workers:idle' do
       machine_id = hub.start_machine
@@ -851,30 +827,6 @@ RSpec.describe Percy::Hub do
       expect do
         hub.set_worker_idle(worker_id: 123)
       end.to raise_error(Percy::Hub::DeadWorkerError)
-    end
-  end
-
-  describe '#get_all_subscription_data' do
-    it 'returns an empty hash if no data is present' do
-      expect(hub.get_all_subscription_data).to eq({})
-    end
-
-    it 'returns a hash of subscription_id to usage data' do
-      hub.increment_monthly_usage(subscription_id: 345)
-      hub.increment_monthly_usage(subscription_id: 346, count: 90)
-
-      expect(hub.get_all_subscription_data).to eq({
-        '345' => '1',
-        '346' => '90',
-      })
-    end
-
-    it 'supports year and month arguments' do
-      hub.increment_monthly_usage(subscription_id: 345)
-      year = Time.now.strftime('%Y')
-      month = Time.now.strftime('%m')
-      expect(hub.get_all_subscription_data(year: year, month: month)).to eq({'345' => '1'})
-      expect(hub.get_all_subscription_data(year: 1960, month: 12)).to eq({})
     end
   end
 

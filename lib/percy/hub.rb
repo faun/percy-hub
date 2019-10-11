@@ -52,13 +52,6 @@
 # - Items removed by release_job, or by _release_expired_locks.
 #   Once this key exists, it is never deleted.
 #
-# subscription:<id>:usage:<year>:<month>:counter [Integer]
-#
-# - How many snapshots have been successfully added per year/month tied to a subscription.
-#   The enforcement of limits is done by the Percy API, not Hub.
-# - Incremented by increment_monthly_usage.
-# - Never deleted. TODO: cleanup after some period of time.
-#
 # build:<id>:subscription_id [Integer]
 #
 # - Subscription ID so we can get from a build to its subscription limit and active locks.
@@ -756,36 +749,6 @@ module Percy
       true
     end
 
-    def get_monthly_usage(subscription_id:)
-      stats.time('hub.methods.get_monthly_usage') do
-        year = Time.now.strftime('%Y')
-        month = Time.now.strftime('%m')
-
-        usage = redis.get("subscription:#{subscription_id}:usage:#{year}:#{month}:counter")
-        usage = Integer(usage || 0)
-
-        # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
-        disconnect_redis
-
-        usage
-      end
-    end
-
-    def increment_monthly_usage(subscription_id:, count: nil)
-      stats.time('hub.methods.increment_monthly_usage') do
-        now = Time.now
-        year = now.strftime('%Y')
-        month = now.strftime('%m')
-        result = redis.incrby(
-          "subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1)
-
-        # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
-        disconnect_redis
-
-        result
-      end
-    end
-
     def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
       raise Percy::Hub::DeadWorkerError if !machine_id
@@ -796,18 +759,6 @@ module Percy
     def clear_worker_idle(worker_id:)
       redis.zrem('workers:idle', worker_id)
       _record_worker_stats
-    end
-
-    def get_all_subscription_data(year: nil, month: nil)
-      now = Time.now
-      year ||= now.strftime('%Y')
-      month ||= now.strftime('%m')
-
-      keys = redis.keys("subscription:*:usage:#{year}:#{month}:counter")
-      return {} if keys.empty?  # Stupid MGET doesn't support empty arrays.
-
-      subscription_data = redis.mapped_mget(*keys)
-      Hash[subscription_data.map { |k, v| [/subscription:(.*):usage:/.match(k)[1], v] }]
     end
 
     def _record_global_locks_stats
