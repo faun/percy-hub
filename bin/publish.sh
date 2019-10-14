@@ -17,7 +17,7 @@ function safe_git_pull_origin_master {
 IMAGE="gcr.io/percy-prod/hub"
 echo "Building $IMAGE"
 cd "$CURDIR/.." && safe_git_pull_origin_master && cd "$CURDIR/.." || exit
-docker build -f Dockerfile -t "$IMAGE:$NOW" src/
+docker build -f Dockerfile -t "$IMAGE:$NOW" ./
 docker tag "$IMAGE:$NOW" "$IMAGE:latest"
 gcloud docker -- push "$IMAGE:$NOW"
 gcloud docker -- push "$IMAGE:latest"
