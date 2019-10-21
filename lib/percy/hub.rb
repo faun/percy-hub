@@ -409,12 +409,9 @@ module Percy
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
               stats.increment('hub.jobs.enqueuing.skipped.no_idle_worker')
-              Percy.logger.warn do
-                "[hub:enqueue_jobs] Could not enqueue jobs, no idle workers available."
-              end
 
               # Sleep for this amount of time waiting for a worker before checking again.
-              return 1
+              return 0.1
             end
           end
         end

@@ -209,7 +209,7 @@ RSpec.describe Percy::Hub do
     context 'with NO idle workers available' do
       it 'returns sleeptime 1 and does not enqueue jobs' do
         hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
-        expect(hub._enqueue_jobs).to eq(1)
+        expect(hub._enqueue_jobs).to eq(0.1)
         expect(hub.redis.llen('jobs:runnable')).to eq(0)
       end
 
