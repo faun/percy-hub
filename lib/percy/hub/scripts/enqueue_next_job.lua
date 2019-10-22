@@ -28,9 +28,12 @@ subscription_locks_limit = subscription_locks_limit or default_locks_limit
 
 local num_active_locks = redis.call('ZCOUNT', subscription_locks_claimed_key, '-inf', '+inf')
 -- If the subscription's concurrency limit has been hit, return and move to the next build.
-if num_active_locks >= subscription_locks_limit then
-  return 'hit_lock_limit'
-end
+
+-- TODO HOTFIX - TEMPORARILY UNBLOCK SUBSCRIPTION LIMITS
+
+-- if num_active_locks >= subscription_locks_limit then
+--   return 'hit_lock_limit'
+-- end
 
 -- If there are no idle workers available, we cannot queue any jobs. We compute the number of idle
 -- workers as the number of items in workers:idle MINUS the number of items in jobs:runnable, since
