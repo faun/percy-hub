@@ -7,6 +7,8 @@ local jobs_runnable_key = KEYS[6]
 local workers_idle_key = KEYS[7]
 
 local now = ARGV[1]
+local default_subscription_locks_limit = tonumber(ARGV[2])
+local min_subscription_locks_limit = tonumber(ARGV[3])
 
 -- Global locks limit.
 -- Default locks limit of 10000 if not specified.
@@ -21,10 +23,9 @@ if num_active_global_locks >= global_locks_limit then
 end
 
 -- Subscription locks limit.
--- Default locks limit of 2 if not specified.
-local default_locks_limit = 2
 local subscription_locks_limit = tonumber(redis.call('GET', subscription_locks_limit_key))
-subscription_locks_limit = subscription_locks_limit or default_locks_limit
+subscription_locks_limit = subscription_locks_limit or default_subscription_locks_limit
+subscription_locks_limit = math.max(subscription_locks_limit, min_subscription_locks_limit)
 
 local num_active_locks = redis.call('ZCOUNT', subscription_locks_claimed_key, '-inf', '+inf')
 -- If the subscription's concurrency limit has been hit, return and move to the next build.

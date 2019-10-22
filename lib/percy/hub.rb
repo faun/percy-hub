@@ -205,6 +205,9 @@ module Percy
     # Default: 1 hour.
     DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS = 3600
 
+    # The default subscription locks limit if unset.
+    DEFAULT_SUBSCRIPTION_LOCKS_LIMIT = 2
+
     attr_accessor :_heard_interrupt
 
     class Error < Exception; end
@@ -432,6 +435,10 @@ module Percy
         ]
         args = [
           enqueued_at || Time.now.to_i,
+          # Default for unset subscription lock limits.
+          DEFAULT_SUBSCRIPTION_LOCKS_LIMIT,
+          # Global minimum for all subscription lock limits.
+          ENV.fetch('MIN_SUBSCRIPTION_LOCKS_LIMIT', DEFAULT_SUBSCRIPTION_LOCKS_LIMIT),
         ]
         _run_script('enqueue_next_job.lua', keys: keys, args: args)
       end

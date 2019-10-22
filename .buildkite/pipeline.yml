@@ -1,0 +1,22 @@
+steps:
+  - name: ":rspec: RSpec"
+    commands:
+      - "make down"
+      - "make build"
+      - "make test"
+      - "make down"
+
+  - name: ":docker: publish images"
+    branches: "master"
+    command: "make publish"
+
+  - wait
+
+  - label: ":percy::kubernetes::rocket: Deploy"
+    trigger: "deploy-hub"
+    branches: "master"
+    async: true
+    build:
+      message: "${BUILDKITE_MESSAGE}"
+      env:
+        TAG: "${BUILDKITE_COMMIT}"

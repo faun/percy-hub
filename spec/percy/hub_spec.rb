@@ -2,6 +2,8 @@ RSpec.describe Percy::Hub do
   let(:hub) { Percy::Hub.new }
   let(:machine_id) { hub.start_machine }
 
+  before(:each) { ENV['MIN_SUBSCRIPTION_LOCKS_LIMIT'] = nil }
+
   def create_idle_test_workers(num_workers)
     worker_ids = []
     num_workers.times do
@@ -187,22 +189,58 @@ RSpec.describe Percy::Hub do
         expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([job_id.to_s])
       end
 
-      it 'enforces concurrency limits (default 2 per subscription)' do
-        hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
-        hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
-        hub.insert_job(job_data: 'process_comparison:125', build_id: 234, subscription_id: 345)
-        hub.insert_job(job_data: 'process_comparison:126', build_id: 234, subscription_id: 345)
+      describe 'concurrency limits' do
+        before(:each) do
+          create_idle_test_workers(10)
 
-        hub.insert_job(job_data: 'process_comparison:130', build_id: 235, subscription_id: 346)
-        hub.insert_job(job_data: 'process_comparison:131', build_id: 235, subscription_id: 346)
-        hub.insert_job(job_data: 'process_comparison:132', build_id: 235, subscription_id: 346)
+          hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+          hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
+          hub.insert_job(job_data: 'process_comparison:125', build_id: 234, subscription_id: 345)
+          hub.insert_job(job_data: 'process_comparison:126', build_id: 234, subscription_id: 345)
 
-        # Returns 0.5, indicating completion of all enqueuing.
-        expect(hub._enqueue_jobs).to eq(0.5)
+          hub.insert_job(job_data: 'process_comparison:130', build_id: 235, subscription_id: 346)
+          hub.insert_job(job_data: 'process_comparison:131', build_id: 235, subscription_id: 346)
+          hub.insert_job(job_data: 'process_comparison:132', build_id: 235, subscription_id: 346)
+          hub.insert_job(job_data: 'process_comparison:133', build_id: 235, subscription_id: 346)
+        end
 
-        # There are 2 enqueued jobs from the first subscription and 2 from the second.
-        expect(hub.redis.llen('jobs:runnable')).to eq(4)
-        expect(hub.redis.lrange('jobs:runnable', 0, 3)).to eq(['6', '5', '2', '1'])
+        it 'enforces concurrency limit default 2 per subscription' do
+          # Returns 0.5, indicating completion of all possible enqueuing.
+          expect(hub._enqueue_jobs).to eq(0.5)
+
+          # There are 2 enqueued jobs from the first subscription and 2 from the second.
+          expect(hub.redis.llen('jobs:runnable')).to eq(4)
+          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['6', '5', '2', '1'])
+        end
+
+        it 'enforces per-subscriber lock limits if set' do
+          hub.set_subscription_locks_limit(subscription_id: 345, limit: 1000)
+          # Returns 0.5, indicating completion of all possible enqueuing.
+          expect(hub._enqueue_jobs).to eq(0.5)
+          # There are 4 enqueued jobs from the first subscription and 2 from the second.
+          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['6', '5', '4', '3', '2', '1'])
+        end
+
+        context 'with MIN_SUBSCRIPTION_LOCKS_LIMIT env var set' do
+          before(:each) { ENV['MIN_SUBSCRIPTION_LOCKS_LIMIT'] = '3' }
+
+          it 'increases all subscriber locks to minimum if set' do
+            hub.set_subscription_locks_limit(subscription_id: 345, limit: 1)
+            # Returns 0.5, indicating completion of all possible enqueuing.
+            expect(hub._enqueue_jobs).to eq(0.5)
+            # There are 3 enqueued jobs from the first subscription and 3 from the second.
+            expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['7', '6', '5', '3', '2', '1'])
+          end
+
+          it 'enforces per-subscriber lock limits if greater than minimum' do
+            hub.set_subscription_locks_limit(subscription_id: 345, limit: 1000)
+            # Returns 0.5, indicating completion of all possible enqueuing.
+            expect(hub._enqueue_jobs).to eq(0.5)
+            # There are 4 enqueued jobs from the first subscription and 3 from the second.
+            expected_job_ids = ['7', '6', '5', '4', '3', '2', '1']
+            expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(expected_job_ids)
+          end
+        end
       end
     end
 
