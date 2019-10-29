@@ -70,7 +70,7 @@ module Percy
             end
 
             job_data = hub.get_job_data(job_id: job_id)
-            Percy.logger.info("[worker:#{worker_id}] Running job:#{job_id} (#{job_data})")
+            Percy.logger.debug { "[worker:#{worker_id}] Running job:#{job_id} (#{job_data})" }
 
             # Assumes a particular format for job_data, might need to be adapted for other jobs.
             action, action_id = job_data.split(':')
@@ -97,7 +97,7 @@ module Percy
             hub.worker_job_complete(worker_id: worker_id)
             hub.release_job(job_id: job_id) unless options[:takeover_job_release]
 
-            Percy.logger.info do
+            Percy.logger.debug do
               "[worker:#{worker_id}] Finished job:#{job_id} successfully (#{job_data})."
             end
           end
