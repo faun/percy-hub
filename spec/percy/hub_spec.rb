@@ -620,6 +620,9 @@ RSpec.describe Percy::Hub do
       hub._enqueue_jobs
       expect(hub.redis.zrange('workers:idle', 0, 10)).to eq([second_worker_id.to_s])
 
+      expect(hub.stats).to receive(:time)
+        .once.with('hub.methods._schedule_next_job').and_call_original
+
       expect(hub._schedule_next_job).to eq(0)
       expect(hub.redis.zrange('workers:idle', 0, 10)).to eq([])
       expect(hub.redis.llen("worker:#{second_worker_id}:runnable")).to eq(1)

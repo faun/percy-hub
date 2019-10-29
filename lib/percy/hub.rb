@@ -597,55 +597,57 @@ module Percy
     #
     # @return [Integer] The amount of time to sleep until the next iteration, usually 0.
     def _schedule_next_job(timeout: nil)
-      # Handle orphaned jobs that might be stuck in jobs:scheduling. We assume that we are a single,
-      # non-concurrent task to schedule jobs, so there should be nothing in jobs:scheduling here
-      # and we can safely push them back into jobs:runnable if they exist.
-      max_handled_orphaned_jobs = 10
-      max_handled_orphaned_jobs.times do
-        orphaned_job = redis.rpoplpush('jobs:scheduling', 'jobs:runnable')
-        break if !orphaned_job
-      end
-
-      # Block and wait to pop a job from runnable to scheduling.
-      timeout = timeout || DEFAULT_TIMEOUT_SECONDS
-      job_id = redis.brpoplpush('jobs:runnable', 'jobs:scheduling', timeout)
-
-      # Hit timeout and did not schedule any jobs, return 0 sleeptime and start again. This timeout
-      # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
-      return 0 if !job_id
-
-      # Find a random idle worker to schedule the job on.
-      worker_id = redis.zrange('workers:idle', 0, -1).sample
-      if !worker_id
-        # There are no idle workers. This should not happen because enqueue_jobs should ensure
-        # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
-        # the case here by sleeping for 1 second and retrying.
-        #
-        # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
-        # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
-        redis.rpoplpush("jobs:scheduling", "jobs:runnable")
-        return 1
-      end
-
-      # Immediately remove the worker from the idle list.
-      clear_worker_idle(worker_id: worker_id)
-
-      # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
-      scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
-
-      job_data = get_job_data(job_id: job_id)
-      Percy.logger.info do
-        "[hub:schedule_jobs] Scheduled job #{job_id} (#{job_data}) on worker #{worker_id}"
-      end
-      if scheduled_job_id != job_id
-        scheduled_job_data = get_job_data(job_id: scheduled_job_id)
-        Percy.logger.warn do
-          "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " +
-          "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
+      stats.time('hub.methods._schedule_next_job') do
+        # Handle orphaned jobs that might be stuck in jobs:scheduling. We assume that we are a single,
+        # non-concurrent task to schedule jobs, so there should be nothing in jobs:scheduling here
+        # and we can safely push them back into jobs:runnable if they exist.
+        max_handled_orphaned_jobs = 10
+        max_handled_orphaned_jobs.times do
+          orphaned_job = redis.rpoplpush('jobs:scheduling', 'jobs:runnable')
+          break if !orphaned_job
         end
-      end
 
-      return 0
+        # Block and wait to pop a job from runnable to scheduling.
+        timeout = timeout || DEFAULT_TIMEOUT_SECONDS
+        job_id = redis.brpoplpush('jobs:runnable', 'jobs:scheduling', timeout)
+
+        # Hit timeout and did not schedule any jobs, return 0 sleeptime and start again. This timeout
+        # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
+        return 0 if !job_id
+
+        # Find a random idle worker to schedule the job on.
+        worker_id = redis.zrange('workers:idle', 0, -1).sample
+        if !worker_id
+          # There are no idle workers. This should not happen because enqueue_jobs should ensure
+          # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
+          # the case here by sleeping for 1 second and retrying.
+          #
+          # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
+          # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
+          redis.rpoplpush("jobs:scheduling", "jobs:runnable")
+          return 1
+        end
+
+        # Immediately remove the worker from the idle list.
+        clear_worker_idle(worker_id: worker_id)
+
+        # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
+        scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
+
+        job_data = get_job_data(job_id: job_id)
+        Percy.logger.debug do
+          "[hub:schedule_jobs] Scheduled job #{job_id} (#{job_data}) on worker #{worker_id}"
+        end
+        if scheduled_job_id != job_id
+          scheduled_job_data = get_job_data(job_id: scheduled_job_id)
+          Percy.logger.warn do
+            "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " +
+            "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
+          end
+        end
+
+        return 0
+      end
     end
 
     # Block and wait until the timeout for the next runnable job for a specific worker.
