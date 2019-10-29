@@ -673,12 +673,12 @@ module Percy
 
         runnable_jobs = redis.lrange("worker:#{worker_id}:runnable", 0, 100)
         running_jobs = redis.lrange("worker:#{worker_id}:running", 0, 100)
-        Percy.logger.info do
+        Percy.logger.debug do
           "[worker:#{worker_id}] Popped #{result} job into running queue " +
           "(runnable: #{runnable_jobs}, running: #{running_jobs})"
         end
       rescue Redis::TimeoutError
-        Percy.logger.info("[worker:#{worker_id}] Handling Redis::TimeoutError")
+        Percy.logger.warn("[worker:#{worker_id}] Handling Redis::TimeoutError")
         disconnect_redis
         return
       end
@@ -701,7 +701,7 @@ module Percy
     #   - the job ID otherwise
     def worker_job_complete(worker_id:)
       result = redis.rpop("worker:#{worker_id}:running")
-      Percy.logger.info { "[worker:#{worker_id}] Popped #{result} from running queue" }
+      Percy.logger.debug { "[worker:#{worker_id}] Popped #{result} from running queue" }
       result
     end
 
