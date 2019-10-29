@@ -446,7 +446,7 @@ module Percy
 
     def remove_active_build(build_id:)
       stats.time('hub.methods.remove_active_build') do
-        Percy.logger.info { "[hub] Removing build #{build_id}, no more jobs." }
+        Percy.logger.debug { "[hub] Removing build #{build_id}, no more jobs." }
         keys = [
           'builds:active',
           "build:#{build_id}:subscription_id",
