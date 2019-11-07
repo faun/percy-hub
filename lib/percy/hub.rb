@@ -195,7 +195,7 @@ module Percy
     # The number of seconds since a worker last sent a heartbeat before we reap it.
     # This is also effectively the amount of time before a dead job will be rescheduled,
     # since dead workers do not cleanup their jobs.
-    DEFAULT_WORKER_REAP_SECONDS = 10
+    DEFAULT_WORKER_REAP_SECONDS = 25 # allow 2 workers heartbeat failures before reaping
 
     # The amount of time a build will remain in builds:active before being allowed to time out
     # and being cleaned up. Default: 5 hours
