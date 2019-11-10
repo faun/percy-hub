@@ -1,20 +1,14 @@
 local build_jobs_new_key = KEYS[1]
-local global_locks_limit_key = KEYS[2]
-local global_locks_claimed_key = KEYS[3]
-local subscription_locks_limit_key = KEYS[4]
-local subscription_locks_claimed_key = KEYS[5]
-local jobs_runnable_key = KEYS[6]
-local workers_idle_key = KEYS[7]
+local global_locks_claimed_key = KEYS[2]
+local subscription_locks_limit_key = KEYS[3]
+local subscription_locks_claimed_key = KEYS[4]
+local jobs_runnable_key = KEYS[5]
+local workers_idle_key = KEYS[6]
 
 local now = ARGV[1]
-local default_subscription_locks_limit = tonumber(ARGV[2])
-local min_subscription_locks_limit = tonumber(ARGV[3])
-
--- Global locks limit.
--- Default locks limit of 10000 if not specified.
-local default_global_locks_limit = 10000
-local global_locks_limit = tonumber(redis.call('GET', global_locks_limit_key))
-global_locks_limit = global_locks_limit or default_global_locks_limit
+local global_locks_limit = tonumber(ARGV[2])
+local default_subscription_locks_limit = tonumber(ARGV[3])
+local min_subscription_locks_limit = tonumber(ARGV[4])
 
 local num_active_global_locks = redis.call('ZCOUNT', global_locks_claimed_key, '-inf', '+inf')
 -- If the global concurrency limit has been hit, return.

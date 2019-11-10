@@ -15,3 +15,5 @@ services:
       - redis
     environment:
       - REDIS_HOST=redis
+    volumes:
+      - .:/app/src

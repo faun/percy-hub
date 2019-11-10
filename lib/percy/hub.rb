@@ -35,7 +35,7 @@
 # - The job IDs that are currently holding locks, scored by insertion timestamp.
 #   The size of this is weakly limited by global:locks:limit.
 # - Added by enqueue_jobs.
-# - Items removed by release_job, or by _release_expired_global_locks.
+# - Items removed by release_job, or by _release_expired_locks.
 #   Once this key exists, it is never deleted.
 #
 # subscription:<id>:locks:limit [Integer]
@@ -221,16 +221,6 @@ module Percy
         schedule_jobs
       when :reap_workers
         reap_workers
-      when :solo
-        fork { enqueue_jobs }
-        fork { schedule_jobs }
-        fork { reap_workers }
-        begin
-          Process.waitall
-        rescue Interrupt
-          # When Ctrl-C'd, wait until children shutdown.
-          Process.waitall
-        end
       end
     end
 
@@ -278,9 +268,7 @@ module Percy
       num_retries ||= 0
 
       stats.time('hub.methods.insert_job') do
-        # Increment the global jobs counter.
         job_id = redis.incr('jobs:created:counter')
-
         keys = [
           'builds:active',
           "build:#{build_id}:subscription_id",
@@ -364,6 +352,7 @@ module Percy
 
         index = 0
         loop do
+          # ZRANGE returns items ordered by score. This ensures priority for older builds.
           build_id = redis.zrange('builds:active', index, index).first
           build_inserted_at = redis.zscore('builds:active', build_id)
 
@@ -380,7 +369,15 @@ module Percy
 
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
           loop do
-            job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            # Optimization: don't run the full LUA script if there are no possible jobs to enqueue.
+            # We also handle returning 0 inside the script if no jobs exist in case there is a race.
+            has_new_jobs = redis.llen("build:#{build_id}:jobs:new") > 0
+            if has_new_jobs
+              job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            else
+              job_result = 0
+            end
+
             case job_result
             when 1
               # A job was successfully enqueued from this build, there may be more.
@@ -426,7 +423,6 @@ module Percy
       stats.time('hub.methods._enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
-          "global:locks:limit",
           "global:locks:claimed",
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:claimed",
@@ -435,6 +431,7 @@ module Percy
         ]
         args = [
           enqueued_at || Time.now.to_i,
+          get_global_locks_limit,
           # Default for unset subscription lock limits.
           DEFAULT_SUBSCRIPTION_LOCKS_LIMIT,
           # Global minimum for all subscription lock limits.
@@ -616,7 +613,9 @@ module Percy
         return 0 if !job_id
 
         # Find a random idle worker to schedule the job on.
-        worker_id = redis.zrange('workers:idle', 0, -1).sample
+        worker_id = stats.time('hub.methods._schedule_next_job.find_random_idle_worker') do
+          redis.zrange('workers:idle', 0, -1).sample
+        end
         if !worker_id
           # There are no idle workers. This should not happen because enqueue_jobs should ensure
           # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle

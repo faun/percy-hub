@@ -159,9 +159,14 @@ RSpec.describe Percy::Hub do
 
       it 'skips empty builds' do
         # Insert a job and then enqueue, so we leave a build ID in builds:active.
+        expect(hub).to receive(:_enqueue_next_job).and_call_original # LUA script is called.
         job_id = hub.insert_job(
           job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
         expect(hub.redis.zcard('builds:active')).to eq(1)
+        expect(hub._enqueue_jobs).to eq(0.5)
+
+        # Check optimization: LUA script is NOT called for empty builds.
+        expect(hub).to_not receive(:_enqueue_next_job)
         expect(hub._enqueue_jobs).to eq(0.5)
 
         # Build is still active, because it is not expired:
@@ -622,6 +627,8 @@ RSpec.describe Percy::Hub do
 
       expect(hub.stats).to receive(:time)
         .once.with('hub.methods._schedule_next_job').and_call_original
+      expect(hub.stats).to receive(:time)
+        .once.with('hub.methods._schedule_next_job.find_random_idle_worker').and_call_original
 
       expect(hub._schedule_next_job).to eq(0)
       expect(hub.redis.zrange('workers:idle', 0, 10)).to eq([])

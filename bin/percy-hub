@@ -6,7 +6,6 @@ COMMANDS = [
   'enqueue_jobs',
   'schedule_jobs',
   'reap_workers',
-  'solo',
 ].freeze
 
 if ARGV.length != 1 || !COMMANDS.include?(ARGV[0])

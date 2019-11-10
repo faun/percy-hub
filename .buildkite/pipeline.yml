@@ -3,6 +3,7 @@ steps:
     commands:
       - "make down"
       - "make build"
+      - "make up-detached"
       - "make test"
       - "make down"
 
