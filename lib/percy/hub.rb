@@ -612,40 +612,42 @@ module Percy
         # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
         return 0 if !job_id
 
-        # Find a random idle worker to schedule the job on.
-        worker_id = stats.time('hub.methods._schedule_next_job.find_random_idle_worker') do
-          redis.zrange('workers:idle', 0, -1).sample
-        end
-        if !worker_id
-          # There are no idle workers. This should not happen because enqueue_jobs should ensure
-          # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
-          # the case here by sleeping for 1 second and retrying.
-          #
-          # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
-          # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
-          redis.rpoplpush("jobs:scheduling", "jobs:runnable")
-          return 1
-        end
-
-        # Immediately remove the worker from the idle list.
-        clear_worker_idle(worker_id: worker_id)
-
-        # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
-        scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
-
-        job_data = get_job_data(job_id: job_id)
-        Percy.logger.debug do
-          "[hub:schedule_jobs] Scheduled job #{job_id} (#{job_data}) on worker #{worker_id}"
-        end
-        if scheduled_job_id != job_id
-          scheduled_job_data = get_job_data(job_id: scheduled_job_id)
-          Percy.logger.warn do
-            "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " +
-            "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
+        stats.time('hub.methods._schedule_next_job.without_timeout') do
+          # Find a random idle worker to schedule the job on.
+          worker_id = stats.time('hub.methods._schedule_next_job.find_random_idle_worker') do
+            redis.zrange('workers:idle', 0, -1).sample
           end
-        end
+          if !worker_id
+            # There are no idle workers. This should not happen because enqueue_jobs should ensure
+            # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
+            # the case here by sleeping for 1 second and retrying.
+            #
+            # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
+            # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
+            redis.rpoplpush("jobs:scheduling", "jobs:runnable")
+            return 1
+          end
 
-        return 0
+          # Immediately remove the worker from the idle list.
+          clear_worker_idle(worker_id: worker_id)
+
+          # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
+          scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
+
+          Percy.logger.debug do
+            job_data = get_job_data(job_id: job_id)
+            "[hub:schedule_jobs] Scheduled job #{job_id} (#{job_data}) on worker #{worker_id}"
+          end
+          if scheduled_job_id != job_id
+            scheduled_job_data = get_job_data(job_id: scheduled_job_id)
+            Percy.logger.warn do
+              "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " +
+              "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
+            end
+          end
+
+          return 0
+        end
       end
     end
 

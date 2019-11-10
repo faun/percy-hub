@@ -628,6 +628,8 @@ RSpec.describe Percy::Hub do
       expect(hub.stats).to receive(:time)
         .once.with('hub.methods._schedule_next_job').and_call_original
       expect(hub.stats).to receive(:time)
+        .once.with('hub.methods._schedule_next_job.without_timeout').and_call_original
+      expect(hub.stats).to receive(:time)
         .once.with('hub.methods._schedule_next_job.find_random_idle_worker').and_call_original
 
       expect(hub._schedule_next_job).to eq(0)
