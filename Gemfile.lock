@@ -14,7 +14,7 @@ GEM
     diff-lcs (1.2.5)
     dogstatsd-ruby (4.4.0)
     excon (0.67.0)
-    ffi (1.9.8)
+    ffi (1.11.1)
     formatador (0.2.5)
     guard (2.12.6)
       formatador (>= 0.2.4)
