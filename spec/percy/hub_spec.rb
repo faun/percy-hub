@@ -584,7 +584,7 @@ RSpec.describe Percy::Hub do
     end
   end
 
-  describe '#_release_expired_locks' do
+  describe '#_reap_expired_locks' do
     before(:each) { create_idle_test_workers(3) }
 
     it 'releases locks that have expired' do
@@ -599,19 +599,21 @@ RSpec.describe Percy::Hub do
       hub._enqueue_next_job(build_id: 234, subscription_id: 345) # Intentionally no enqueued_at.
 
       expect(hub.redis.zcount('global:locks:claimed', '-inf', '+inf')).to eq(3)
-      expect(hub._release_expired_locks(subscription_id: 345)).to eq(2)
+      expect(hub.redis.zcount('subscription:345:locks:claimed', '-inf', '+inf')).to eq(3)
+      expect(hub._reap_expired_locks).to eq(2)
       expect(hub.redis.zcount('global:locks:claimed', '-inf', '+inf')).to eq(1)
+      expect(hub.redis.zcount('subscription:345:locks:claimed', '-inf', '+inf')).to eq(1)
     end
 
     it 'does nothing when no locks exist' do
-      expect(hub._release_expired_locks(subscription_id: 345)).to eq(0)
+      expect(hub._reap_expired_locks).to eq(0)
     end
 
     it 'does nothing when locks exist but are not expired' do
       hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
       hub._enqueue_next_job(build_id: 234, subscription_id: 345)
 
-      expect(hub._release_expired_locks(subscription_id: 345)).to eq(0)
+      expect(hub._reap_expired_locks).to eq(0)
     end
   end
 

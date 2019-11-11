@@ -10,6 +10,9 @@ up:
 up-detached:
 	docker-compose up -d
 
+bash:
+	docker-compose exec hub bash
+
 test:
 	docker-compose exec hub /sbin/setuser app bundle exec rspec
 

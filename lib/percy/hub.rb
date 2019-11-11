@@ -35,7 +35,7 @@
 # - The job IDs that are currently holding locks, scored by insertion timestamp.
 #   The size of this is weakly limited by global:locks:limit.
 # - Added by enqueue_jobs.
-# - Items removed by release_job, or by _release_expired_locks.
+# - Items removed by release_job, or by _reap_expired_locks.
 #   Once this key exists, it is never deleted.
 #
 # subscription:<id>:locks:limit [Integer]
@@ -49,7 +49,7 @@
 # - The job IDs that are currently holding locks, scored by insertion timestamp.
 #   This is limited to the subscription concurrency_limit.
 # - Added by enqueue_jobs.
-# - Items removed by release_job, or by _release_expired_locks.
+# - Items removed by release_job, or by _reap_expired_locks.
 #   Once this key exists, it is never deleted.
 #
 # subscription:<id>:usage:<year>:<month>:counter [Integer]
@@ -208,6 +208,9 @@ module Percy
     # The default subscription locks limit if unset.
     DEFAULT_SUBSCRIPTION_LOCKS_LIMIT = 2
 
+    # The number of seconds between lock reaping passes.
+    DEFAULT_LOCK_REAP_SECONDS = 10
+
     attr_accessor :_heard_interrupt
 
     class Error < Exception; end
@@ -221,6 +224,8 @@ module Percy
         schedule_jobs
       when :reap_workers
         reap_workers
+      when :reap_locks
+        reap_locks
       end
     end
 
@@ -364,9 +369,6 @@ module Percy
           # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
-          # Cleanup any expired locks for this subscription.
-          _release_expired_locks(subscription_id: subscription_id)
-
           # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
           loop do
             # Optimization: don't run the full LUA script if there are no possible jobs to enqueue.
@@ -383,7 +385,6 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              _record_global_locks_stats
               Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
               next
             when 0
@@ -399,7 +400,6 @@ module Percy
               # Global concurrency limit hit. Don't attempt to schedule more work.
               # Sleep for this amount of time waiting for a worker before checking again.
               stats.increment('hub.jobs.enqueuing.skipped.hit_global_lock_limit')
-              _record_global_locks_stats
               return 1
             when 'hit_lock_limit'
               # Subscription concurrency limit hit, move on to the next build.
@@ -553,17 +553,21 @@ module Percy
       return 5  # Sleep.
     end
 
+    def reap_locks
+      Percy.logger.info { '[hub:reap_locks] Starting lock reaper...' }
+      infinite_loop_with_graceful_shutdown do
+        _reap_expired_locks
+        sleep(DEFAULT_LOCK_REAP_SECONDS)
+      end
+      Percy.logger.info { '[hub:reap_locks] Quit' }
+    end
+
     # Releases locks older than the timeout, which are considered expired.
-    def _release_expired_locks(
-      subscription_id:,
+    def _reap_expired_locks(
       older_than_seconds: DEFAULT_EXPIRED_LOCK_TIMEOUT_SECONDS
     )
       time_ago = Time.now.to_i - older_than_seconds
-      jobs_with_expired_locks = redis.zrangebyscore(
-        "subscription:#{subscription_id}:locks:claimed",
-        '-inf',
-        time_ago,
-      )
+      jobs_with_expired_locks = redis.zrangebyscore('global:locks:claimed', '-inf', time_ago)
       return 0 unless jobs_with_expired_locks
 
       # Release expired locks.
@@ -572,12 +576,32 @@ module Percy
       # jobs finish or workers are reaped. Locks are decoupled and behave independently, and in
       # rare cases will need to be released when they expire, whether or not job data exists.
       jobs_with_expired_locks.each do |job_id|
-        # This requires the subscription_id to avoid relying on job data existing.
+        subscription_id = redis.get("job:#{job_id}:subscription_id")
+
+        # Handle race where job finishes and the lock is already released.
+        next if !subscription_id
+
         _release_locks_only(subscription_id: subscription_id, job_id: job_id)
       end
 
+      _record_global_locks_stats
       stats.count('hub.jobs.enqueuing.locks.expired', jobs_with_expired_locks.length)
+
       jobs_with_expired_locks.length
+    end
+
+    def _release_locks_only(subscription_id:, job_id:)
+      stats.time('hub.methods.release_locks') do
+        keys = [
+          "global:locks:claimed",
+          "subscription:#{subscription_id}:locks:claimed",
+        ]
+        args = [
+          job_id,
+        ]
+        _run_script('release_locks.lua', keys: keys, args: args)
+      end
+      true
     end
 
     # Schedules jobs from jobs:runnable onto idle workers.
@@ -743,21 +767,6 @@ module Percy
         # Record completed alltime jobs stats and that we just completed a job.
         stats.gauge('hub.jobs.completed.alltime', job_id)
         stats.increment('hub.jobs.completed')
-        _record_global_locks_stats
-      end
-      true
-    end
-
-    def _release_locks_only(subscription_id:, job_id:)
-      stats.time('hub.methods.release_locks') do
-        keys = [
-          "global:locks:claimed",
-          "subscription:#{subscription_id}:locks:claimed",
-        ]
-        args = [
-          job_id,
-        ]
-        _run_script('release_locks.lua', keys: keys, args: args)
         _record_global_locks_stats
       end
       true
