@@ -24,6 +24,7 @@ RSpec.describe Percy::Hub::Worker do
       expect(worker.hub).to_not eq(old_hub)
     end
   end
+
   describe '#run' do
     let(:machine_id) { hub.start_machine }
     let(:worker_id) { hub.register_worker(machine_id: machine_id) }
@@ -137,6 +138,21 @@ RSpec.describe Percy::Hub::Worker do
       expect(hub.list_workers_by_heartbeat(older_than_seconds: 0)).to eq(['1'])
       expect(hub.list_workers_by_heartbeat(older_than_seconds: 5)).to eq([])
     end
+
+    it 'does not crash with bad job data' do
+      # hub validates the format of job data, so a stub is the easiest way to
+      # simulate this production case we've seen
+      allow_any_instance_of(Percy::Hub).to receive(:get_job_data).and_return nil
+
+      thread = Thread.new do
+        worker.run(times: 1) { }
+      end
+
+      wait_until_any_worker_is_running
+      insert_and_schedule_random_job
+      thread.join(1)
+
+      expect(hub.redis.zcount('global:locks:claimed', '-inf', '+inf')).to eq(0)
+    end
   end
 end
-

@@ -72,30 +72,34 @@ module Percy
             job_data = hub.get_job_data(job_id: job_id)
             Percy.logger.debug { "[worker:#{worker_id}] Running job:#{job_id} (#{job_data})" }
 
-            # Assumes a particular format for job_data, might need to be adapted for other jobs.
-            action, action_id = job_data.split(':')
-            action = action.to_sym
+            unless job_data.nil?
+              # Assumes a particular format for job_data, might need to be
+              # adapted for other jobs.
+              action, action_id = job_data.split(':')
+              action = action.to_sym
 
-            options = {
-              num_retries: hub.get_job_num_retries(job_id: job_id),
-              hub_job_id: job_id,
+              options = {
+                num_retries: hub.get_job_num_retries(job_id: job_id),
+                hub_job_id: job_id,
 
-              # Jobs can mutate this option to true to manually handle job lock releases.
-              takeover_job_release: false,
-            }
-            case action
-            when :process_comparison
-              options[:comparison_id] = Integer(action_id)
-              hub.stats.time('hub.jobs.completed.process_comparison') do
-                yield(action, options)
+                # Jobs can mutate this option to true to manually handle job
+                # lock releases.
+                takeover_job_release: false,
+              }
+              case action
+              when :process_comparison
+                options[:comparison_id] = Integer(action_id)
+                hub.stats.time('hub.jobs.completed.process_comparison') do
+                  yield(action, options)
+                end
+              else
+                raise NotImplementedError.new("Unhandled job type: #{action}")
               end
-            else
-              raise NotImplementedError.new("Unhandled job type: #{action}")
             end
 
             # Success!
             hub.worker_job_complete(worker_id: worker_id)
-            hub.release_job(job_id: job_id) unless options[:takeover_job_release]
+            hub.release_job(job_id: job_id) unless options&.dig(:takeover_job_release)
 
             Percy.logger.debug do
               "[worker:#{worker_id}] Finished job:#{job_id} successfully (#{job_data})."
