@@ -403,7 +403,10 @@ module Percy
               return 1
             when 'hit_lock_limit'
               # Subscription concurrency limit hit, move on to the next build.
-              stats.increment('hub.jobs.enqueuing.skipped.hit_lock_limit')
+              stats.increment(
+                'hub.jobs.enqueuing.skipped.hit_lock_limit',
+                tags: [subscription_id],
+              )
               index += 1
               break
             when 'no_idle_worker'
