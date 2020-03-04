@@ -250,13 +250,13 @@ module Percy
       Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
     end
 
+    def get_subscription_locks_claimed(subscription_id:)
+      Integer(redis.zcard("subscription:#{subscription_id}:locks:claimed") || 0)
+    end
+
     def set_subscription_locks_limit(subscription_id:, limit:)
       limit = Integer(limit)  # Sanity check.
       redis.set("subscription:#{subscription_id}:locks:limit", limit)
-    end
-
-    def get_subscription_locks_limit(subscription_id:)
-      Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
     end
 
     # Inserts a new job.

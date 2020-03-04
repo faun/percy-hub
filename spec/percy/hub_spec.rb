@@ -35,6 +35,14 @@ RSpec.describe Percy::Hub do
         expect(hub.get_subscription_locks_limit(subscription_id: 'foo:123')).to eq(5)
       end
     end
+
+    describe '#get_subscription_locks_claimed' do
+      it 'gets the claim count' do
+        3.times { |i| hub.redis.zadd('subscription:foo:123:locks:claimed', Time.now.to_i, i) }
+        expect(hub.get_subscription_locks_claimed(subscription_id: 'foo:123')).to eq(3)
+        hub.redis.del('subscription:foo:123:locks:claimed')
+      end
+    end
   end
 
   describe 'global locks limit' do
