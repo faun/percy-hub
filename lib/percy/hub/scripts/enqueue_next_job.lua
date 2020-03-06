@@ -21,7 +21,7 @@ local subscription_locks_limit = tonumber(redis.call('GET', subscription_locks_l
 subscription_locks_limit = subscription_locks_limit or default_subscription_locks_limit
 subscription_locks_limit = math.max(subscription_locks_limit, min_subscription_locks_limit)
 
-local num_active_locks = redis.call('ZCOUNT', subscription_locks_claimed_key, '-inf', '+inf')
+local num_active_locks = redis.call('ZCARD', subscription_locks_claimed_key)
 -- If the subscription's concurrency limit has been hit, return and move to the next build.
 if num_active_locks >= subscription_locks_limit then
   return 'hit_lock_limit'
