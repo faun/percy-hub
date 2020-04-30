@@ -1,4 +1,4 @@
-FROM phusion/passenger-ruby23:latest
+FROM phusion/passenger-ruby26:latest
 
 # Configure the apps to be supervised.
 ADD bin/schedule-jobs.sh /etc/service/schedule-jobs/run
