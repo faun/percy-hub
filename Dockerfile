@@ -13,5 +13,6 @@ ADD . /app/src/
 RUN chown -R app:app /app/src/
 
 WORKDIR /app/src/
+RUN /sbin/setuser app gem install bundler -v 2.1.4
 ARG BUNDLE_INSTALL_FLAGS="--jobs 5 --without development:test --deployment"
 RUN /sbin/setuser app bundle install $BUNDLE_INSTALL_FLAGS

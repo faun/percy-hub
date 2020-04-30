@@ -96,7 +96,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
-  bundler (~> 1.7)
+  bundler (~> 2.1.4)
   guard-rspec
   percy-hub!
   percy-style (~> 0.7.0)
@@ -104,4 +104,4 @@ DEPENDENCIES
   rspec (~> 3)
 
 BUNDLED WITH
-   1.17.3
+   2.1.4
