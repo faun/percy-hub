@@ -10,13 +10,22 @@ up:
 up-detached:
 	docker-compose up -d
 
-bash:
+su:
 	docker-compose exec hub bash
 
-test:
+bash:
+	docker-compose exec hub /sbin/setuser app bash
+
+_set-container-permissions:
+	@cat /etc/group | grep docker-apps > /dev/null || groupadd -g 9999 docker-apps >/dev/null 2>&1 || true
+	@usermod -a -G docker-apps $$(whoami) >/dev/null 2>&1 || true
+	@chgrp -R 9999 .
+	@chmod -R g+w .
+
+test: _set-container-permissions
 	docker-compose exec hub /sbin/setuser app bundle exec rspec
 
-rubocop:
+rubocop: _set-container-permissions
 	@echo "--- Rubocop"
 	@mkdir -p ./tmp/rubocop
 	@chgrp -R 9999 ./tmp/rubocop
