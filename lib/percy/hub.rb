@@ -213,7 +213,7 @@ module Percy
 
     attr_accessor :_heard_interrupt
 
-    class Error < Exception; end
+    class Error < RuntimeError; end
     class DeadWorkerError < Percy::Hub::Error; end
 
     def run(command:)
@@ -238,12 +238,12 @@ module Percy
     end
 
     def get_global_locks_limit
-      Integer(redis.get("global:locks:limit") || 10000)
+      Integer(redis.get('global:locks:limit') || 10000)
     end
 
     def set_global_locks_limit(limit:)
       limit = Integer(limit)  # Sanity check.
-      redis.set("global:locks:limit", limit)
+      redis.set('global:locks:limit', limit)
     end
 
     def get_subscription_locks_limit(subscription_id:)
@@ -262,13 +262,14 @@ module Percy
     # Inserts a new job.
     def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil, num_retries: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.
-      raise ArgumentError.new('job_data is required') if !job_data
-      raise ArgumentError.new('build_id is required') if !build_id
-      raise ArgumentError.new('subscription_id is required') if !subscription_id
+      raise ArgumentError, 'job_data is required' unless job_data
+      raise ArgumentError, 'build_id is required' unless build_id
+      raise ArgumentError, 'subscription_id is required' unless subscription_id
 
       # Right now, enforce a single format for job_data because the worker also enforces it.
-      raise ArgumentError.new(
-        'job_data must match process_\w+:\d+') if !job_data.match(/\Aprocess_\w+:\d+\Z/)
+      unless job_data.match(/\Aprocess_\w+:\d+\Z/)
+        raise ArgumentError, 'job_data must match process_\w+:\d+'
+      end
 
       num_retries ||= 0
 
@@ -295,8 +296,8 @@ module Percy
         _run_script('insert_job.lua', keys: keys, args: args)
         stats.gauge('hub.jobs.created.alltime', job_id)
         Percy.logger.debug do
-          "[hub] Inserted job #{job_id}, build #{build_id}, " +
-          "subscription #{subscription_id}: #{job_data}"
+          "[hub] Inserted job #{job_id}, build #{build_id}, " \
+            "subscription #{subscription_id}: #{job_data}"
         end
 
         # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
@@ -364,7 +365,7 @@ module Percy
           # We've iterated through all the active builds and successfully checked and/or enqueued
           # all potential jobs for all idle workers. Sleep for a small amount of time before
           # checking again to see if locks have been released or idle capacity is available.
-          return 0.5 if !build_id
+          return 0.5 unless build_id
 
           # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")
@@ -374,10 +375,10 @@ module Percy
             # Optimization: don't run the full LUA script if there are no possible jobs to enqueue.
             # We also handle returning 0 inside the script if no jobs exist in case there is a race.
             has_new_jobs = redis.llen("build:#{build_id}:jobs:new") > 0
-            if has_new_jobs
-              job_result = _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+            job_result = if has_new_jobs
+              _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
             else
-              job_result = 0
+              0
             end
 
             case job_result
@@ -426,7 +427,7 @@ module Percy
       stats.time('hub.methods._enqueue_next_job') do
         keys = [
           "build:#{build_id}:jobs:new",
-          "global:locks:claimed",
+          'global:locks:claimed',
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:claimed",
           'jobs:runnable',
@@ -450,7 +451,7 @@ module Percy
         keys = [
           'builds:active',
           "build:#{build_id}:subscription_id",
-          "build:#{build_id}:jobs:new"
+          "build:#{build_id}:jobs:new",
         ]
         args = [
           build_id,
@@ -471,7 +472,8 @@ module Percy
     end
 
     def register_worker(machine_id:)
-      raise ArgumentError.new('machine_id is required') if !machine_id
+      raise ArgumentError, 'machine_id is required' unless machine_id
+
       stats.time('hub.methods.register_worker') do
         worker_id = redis.incr('workers:created:counter')
         redis.zadd('workers:online', machine_id, worker_id)
@@ -494,7 +496,7 @@ module Percy
       # Fail if worker is no longer online. This shouldn't be possible, but we want to avoid
       # a race where a heartbeat is added after the worker is removed and we never cleanup the key.
       machine_id = redis.zscore('workers:online', worker_id)
-      raise Percy::Hub::DeadWorkerError if !machine_id
+      raise Percy::Hub::DeadWorkerError unless machine_id
 
       redis.zadd('workers:heartbeat', Time.now.to_i + (offset_seconds || 0), worker_id)
     end
@@ -547,13 +549,13 @@ module Percy
       max_orphaned_jobs = dead_worker_ids.length + 10
       max_orphaned_jobs.times do
         orphaned_job_id = redis.lpop('jobs:orphaned')
-        break if !orphaned_job_id
+        break unless orphaned_job_id
 
         retry_job(job_id: orphaned_job_id)
         release_job(job_id: orphaned_job_id)
       end
 
-      return 5  # Sleep.
+      5 # Sleep.
     end
 
     def reap_locks
@@ -582,7 +584,7 @@ module Percy
         subscription_id = redis.get("job:#{job_id}:subscription_id")
 
         # Handle race where job finishes and the lock is already released.
-        next if !subscription_id
+        next unless subscription_id
 
         _release_locks_only(subscription_id: subscription_id, job_id: job_id)
       end
@@ -596,7 +598,7 @@ module Percy
     def _release_locks_only(subscription_id:, job_id:)
       stats.time('hub.methods.release_locks') do
         keys = [
-          "global:locks:claimed",
+          'global:locks:claimed',
           "subscription:#{subscription_id}:locks:claimed",
         ]
         args = [
@@ -628,30 +630,30 @@ module Percy
         max_handled_orphaned_jobs = 10
         max_handled_orphaned_jobs.times do
           orphaned_job = redis.rpoplpush('jobs:scheduling', 'jobs:runnable')
-          break if !orphaned_job
+          break unless orphaned_job
         end
 
         # Block and wait to pop a job from runnable to scheduling.
-        timeout = timeout || DEFAULT_TIMEOUT_SECONDS
+        timeout ||= DEFAULT_TIMEOUT_SECONDS
         job_id = redis.brpoplpush('jobs:runnable', 'jobs:scheduling', timeout)
 
         # Hit timeout and did not schedule any jobs, return 0 sleeptime and start again. This timeout
         # makes the BRPOPLPUSH not block forever and give us a chance to check for process signals.
-        return 0 if !job_id
+        return 0 unless job_id
 
         stats.time('hub.methods._schedule_next_job.without_timeout') do
           # Find a random idle worker to schedule the job on.
           worker_id = stats.time('hub.methods._schedule_next_job.find_random_idle_worker') do
             redis.zrange('workers:idle', 0, -1).sample
           end
-          if !worker_id
+          unless worker_id
             # There are no idle workers. This should not happen because enqueue_jobs should ensure
             # that jobs are only pushed into jobs:runnable if there are idle workers, but we can handle
             # the case here by sleeping for 1 second and retrying.
             #
             # Push the job back into jobs:runnable. Unfortunately this goes to the end of the
             # jobs:runnable list and there is no alternative lpoprush, but that's ok here.
-            redis.rpoplpush("jobs:scheduling", "jobs:runnable")
+            redis.rpoplpush('jobs:scheduling', 'jobs:runnable')
             return 1
           end
 
@@ -668,8 +670,8 @@ module Percy
           if scheduled_job_id != job_id
             scheduled_job_data = get_job_data(job_id: scheduled_job_id)
             Percy.logger.warn do
-              "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " +
-              "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
+              "[hub:schedule_jobs] Mismatch: expected to schedule job #{job_id} (#{job_data}) " \
+                "but scheduled #{scheduled_job_id} (#{scheduled_job_data}) instead"
             end
           end
 
@@ -684,7 +686,7 @@ module Percy
     #   - `nil` when the operation timed out
     #   - the job ID otherwise
     def wait_for_job(worker_id:, timeout: nil)
-      timeout = timeout || DEFAULT_TIMEOUT_SECONDS
+      timeout ||= DEFAULT_TIMEOUT_SECONDS
       begin
         # Race condition handling: this worker thinks it is idle and is asking for another job, but
         # it was previously given a job to handle. Pop all the running jobs back into runnable so
@@ -696,14 +698,15 @@ module Percy
         end
 
         result = redis.brpoplpush(
-          "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout)
+          "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout,
+        )
         return unless result
 
         runnable_jobs = redis.lrange("worker:#{worker_id}:runnable", 0, 100)
         running_jobs = redis.lrange("worker:#{worker_id}:running", 0, 100)
         Percy.logger.debug do
-          "[worker:#{worker_id}] Popped #{result} job into running queue " +
-          "(runnable: #{runnable_jobs}, running: #{running_jobs})"
+          "[worker:#{worker_id}] Popped #{result} job into running queue " \
+            "(runnable: #{runnable_jobs}, running: #{running_jobs})"
         end
       rescue Redis::TimeoutError
         Percy.logger.warn("[worker:#{worker_id}] Handling Redis::TimeoutError")
@@ -753,9 +756,10 @@ module Percy
     def release_job(job_id:)
       stats.time('hub.methods.release_job') do
         subscription_id = redis.get("job:#{job_id}:subscription_id")
-        return false if !subscription_id
+        return false unless subscription_id
+
         keys = [
-          "global:locks:claimed",
+          'global:locks:claimed',
           "subscription:#{subscription_id}:locks:claimed",
           "job:#{job_id}:data",
           "job:#{job_id}:build_id",
@@ -796,7 +800,8 @@ module Percy
         year = now.strftime('%Y')
         month = now.strftime('%m')
         result = redis.incrby(
-          "subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1)
+          "subscription:#{subscription_id}:usage:#{year}:#{month}:counter", count || 1,
+        )
 
         # Disconnect now (instead of timeout) to avoid hitting our DB connection limit.
         disconnect_redis
@@ -807,7 +812,8 @@ module Percy
 
     def set_worker_idle(worker_id:)
       machine_id = redis.zscore('workers:online', worker_id)
-      raise Percy::Hub::DeadWorkerError if !machine_id
+      raise Percy::Hub::DeadWorkerError unless machine_id
+
       redis.zadd('workers:idle', machine_id, worker_id)
       _record_worker_stats
     end
@@ -823,7 +829,7 @@ module Percy
       month ||= now.strftime('%m')
 
       keys = redis.keys("subscription:*:usage:#{year}:#{month}:counter")
-      return {} if keys.empty?  # Stupid MGET doesn't support empty arrays.
+      return {} if keys.empty? # Stupid MGET doesn't support empty arrays.
 
       subscription_data = redis.mapped_mget(*keys)
       Hash[subscription_data.map { |k, v| [/subscription:(.*):usage:/.match(k)[1], v] }]
@@ -855,7 +861,7 @@ module Percy
       redis.evalsha(_load_script_sha(name), keys: keys, argv: args)
     end
 
-    def infinite_loop_with_graceful_shutdown(&block)
+    def infinite_loop_with_graceful_shutdown
       # Catch SIGINT and SIGTERM and trigger gracefully shutdown on the next loop iteration.
       self._heard_interrupt = false
       Signal.trap(:INT) do
@@ -866,6 +872,7 @@ module Percy
 
       loop do
         break if _heard_interrupt
+
         yield
       end
     end

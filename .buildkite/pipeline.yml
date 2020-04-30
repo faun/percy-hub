@@ -7,6 +7,30 @@ steps:
       - "make test"
       - "make down"
 
+  - label: ":sunglasses: Style"
+    commands:
+      - "make down"
+      - "make build"
+      - "make up-detached"
+      - "make rubocop"
+      - "make down"
+    artifact_paths: ./tmp/rubocop/*
+    timeout_in_minutes: 10
+
+  - wait: ~
+    continue_on_failure: true
+
+  - label: ":white_check_mark: Test Summary"
+    plugins:
+      - bugcrowd/test-summary#v1.9.1:
+          inputs:
+            - label: rubocop
+              artifact_path: tmp/rubocop/*
+              type: oneline
+          formatter:
+            type: details
+          context: test-summary
+
   - name: ":docker: publish images"
     branches: "master"
     command: "make publish"

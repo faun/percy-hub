@@ -22,10 +22,9 @@ module Percy
       end
 
       def disconnect_redis
-        @redis.close if @redis
+        @redis&.close
         @redis = nil
       end
     end
   end
 end
-

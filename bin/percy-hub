@@ -2,11 +2,11 @@
 
 require 'percy/hub'
 
-COMMANDS = [
-  'enqueue_jobs',
-  'schedule_jobs',
-  'reap_workers',
-  'reap_locks',
+COMMANDS = %w[
+  enqueue_jobs
+  schedule_jobs
+  reap_workers
+  reap_locks
 ].freeze
 
 if ARGV.length != 1 || !COMMANDS.include?(ARGV[0])

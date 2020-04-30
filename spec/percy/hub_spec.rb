@@ -73,7 +73,8 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.get('jobs:created:counter')).to be_nil
 
       result = hub.insert_job(
-        job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+        job_data: 'process_comparison:123', build_id: 234, subscription_id: 345,
+      )
       expect(result).to eq(1)
       expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
       expect(hub.redis.zscore('builds:active', 234)).to be > 1
@@ -169,7 +170,8 @@ RSpec.describe Percy::Hub do
         # Insert a job and then enqueue, so we leave a build ID in builds:active.
         expect(hub).to receive(:_enqueue_next_job).and_call_original # LUA script is called.
         job_id = hub.insert_job(
-          job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+          job_data: 'process_comparison:123', build_id: 234, subscription_id: 345,
+        )
         expect(hub.redis.zcard('builds:active')).to eq(1)
         expect(hub._enqueue_jobs).to eq(0.5)
 
@@ -190,7 +192,7 @@ RSpec.describe Percy::Hub do
           job_data: 'process_comparison:123',
           build_id: 234,
           subscription_id: 345,
-          inserted_at: Time.now.to_i - Percy::Hub::DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS - 1
+          inserted_at: Time.now.to_i - Percy::Hub::DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS - 1,
         )
         expect(hub.redis.zcard('builds:active')).to eq(1)
         expect(hub._enqueue_jobs).to eq(0.5)
@@ -223,7 +225,7 @@ RSpec.describe Percy::Hub do
 
           # There are 2 enqueued jobs from the first subscription and 2 from the second.
           expect(hub.redis.llen('jobs:runnable')).to eq(4)
-          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['6', '5', '2', '1'])
+          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(%w[6 5 2 1])
         end
 
         it 'enforces per-subscriber lock limits if set' do
@@ -231,7 +233,7 @@ RSpec.describe Percy::Hub do
           # Returns 0.5, indicating completion of all possible enqueuing.
           expect(hub._enqueue_jobs).to eq(0.5)
           # There are 4 enqueued jobs from the first subscription and 2 from the second.
-          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['6', '5', '4', '3', '2', '1'])
+          expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(%w[6 5 4 3 2 1])
         end
 
         context 'with MIN_SUBSCRIPTION_LOCKS_LIMIT env var set' do
@@ -242,7 +244,7 @@ RSpec.describe Percy::Hub do
             # Returns 0.5, indicating completion of all possible enqueuing.
             expect(hub._enqueue_jobs).to eq(0.5)
             # There are 3 enqueued jobs from the first subscription and 3 from the second.
-            expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(['7', '6', '5', '3', '2', '1'])
+            expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(%w[7 6 5 3 2 1])
           end
 
           it 'enforces per-subscriber lock limits if greater than minimum' do
@@ -250,7 +252,7 @@ RSpec.describe Percy::Hub do
             # Returns 0.5, indicating completion of all possible enqueuing.
             expect(hub._enqueue_jobs).to eq(0.5)
             # There are 4 enqueued jobs from the first subscription and 3 from the second.
-            expected_job_ids = ['7', '6', '5', '4', '3', '2', '1']
+            expected_job_ids = %w[7 6 5 4 3 2 1]
             expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(expected_job_ids)
           end
         end
@@ -709,7 +711,7 @@ RSpec.describe Percy::Hub do
         .with(
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
-          Percy::Hub::DEFAULT_TIMEOUT_SECONDS
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
         )
         .and_return(nil)
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
@@ -720,7 +722,7 @@ RSpec.describe Percy::Hub do
         .with(
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
-          Percy::Hub::DEFAULT_TIMEOUT_SECONDS
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
         )
         .and_raise(Redis::TimeoutError)
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
@@ -847,7 +849,8 @@ RSpec.describe Percy::Hub do
 
     it 'records stats' do
       job_id = hub.insert_job(
-        job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+        job_data: 'process_comparison:123', build_id: 234, subscription_id: 345,
+      )
 
       expect(hub.stats).to receive(:increment).once.with('hub.jobs.completed').and_call_original
       expect(hub.stats).to receive(:gauge)
@@ -923,17 +926,17 @@ RSpec.describe Percy::Hub do
       hub.increment_monthly_usage(subscription_id: 345)
       hub.increment_monthly_usage(subscription_id: 346, count: 90)
 
-      expect(hub.get_all_subscription_data).to eq({
+      expect(hub.get_all_subscription_data).to eq(
         '345' => '1',
         '346' => '90',
-      })
+      )
     end
 
     it 'supports year and month arguments' do
       hub.increment_monthly_usage(subscription_id: 345)
       year = Time.now.strftime('%Y')
       month = Time.now.strftime('%m')
-      expect(hub.get_all_subscription_data(year: year, month: month)).to eq({'345' => '1'})
+      expect(hub.get_all_subscription_data(year: year, month: month)).to eq('345' => '1')
       expect(hub.get_all_subscription_data(year: 1960, month: 12)).to eq({})
     end
   end

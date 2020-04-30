@@ -1,5 +1,4 @@
-# coding: utf-8
-lib = File.expand_path('../lib', __FILE__)
+lib = File.expand_path('lib', __dir__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'percy/hub/version'
 
@@ -8,20 +7,21 @@ Gem::Specification.new do |spec|
   spec.version       = Percy::Hub::VERSION
   spec.authors       = ['Perceptual Inc.']
   spec.email         = ['team@percy.io']
-  spec.summary       = %q{Percy::Hub}
-  spec.description   = %q{}
+  spec.summary       = 'Percy::Hub'
+  spec.description   = ''
   spec.homepage      = ''
   spec.license       = 'MIT'
 
   spec.files         = Dir['README.md', 'lib/**/*', 'bin/*']
-  spec.executables   = spec.files.grep(%r{^bin/}) { |f| File.basename(f) }
-  spec.test_files    = spec.files.grep(%r{^(test|spec|features)/})
+  spec.executables   = spec.files.grep(/^bin\//) { |f| File.basename(f) }
+  spec.test_files    = spec.files.grep(/^(test|spec|features)\//)
   spec.require_paths = ['lib']
 
   spec.add_dependency 'redis', '~> 4.0'
   spec.add_dependency 'percy-common', '>= 2.0.0', '< 4.0.0'
 
   spec.add_development_dependency 'bundler', '~> 1.7'
+  spec.add_development_dependency 'percy-style', '~> 0.7.0'
   spec.add_development_dependency 'rake', '~> 10.0'
   spec.add_development_dependency 'rspec', '~> 3'
 end

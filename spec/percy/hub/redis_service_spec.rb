@@ -6,6 +6,7 @@ RSpec.describe Percy::Hub::RedisService do
       expect(hub.redis).to be
     end
   end
+
   describe '#disconnect_redis' do
     it 'clears the instance variable' do
       old_redis = hub.redis
@@ -14,4 +15,3 @@ RSpec.describe Percy::Hub::RedisService do
     end
   end
 end
-

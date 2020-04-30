@@ -23,7 +23,7 @@ module Percy
               heartbeat_hub.worker_heartbeat(worker_id: worker_id)
               sleep HEARTBEAT_SLEEP_SECONDS
             end
-          rescue
+          rescue StandardError
             # Slightly dumb, but catch all exceptions (possibly Redis timeouts) and spawn a new
             # thread, then exit. Also sleep first, in case we are caught in a failure loop.
             sleep HEARTBEAT_SLEEP_SECONDS
@@ -32,8 +32,8 @@ module Percy
         end
       end
 
-      def run(times: nil, &block)
-        raise ArgumentError.new('block must be given') if !block_given?
+      def run(times: nil)
+        raise ArgumentError, 'block must be given' unless block_given?
 
         begin
           # Catch SIGINT and SIGTERM and trigger graceful shutdown after the job completes.
@@ -44,7 +44,7 @@ module Percy
           end
           Signal.trap(:TERM) { heard_interrupt = true }
 
-          Percy.logger.info("[worker] Registering...")
+          Percy.logger.info('[worker] Registering...')
           worker_id = hub.register_worker(machine_id: ENV['PERCY_WORKER_MACHINE_ID'] || 1)
           heartbeat_thread = run_heartbeat_thread(worker_id: worker_id)
 
@@ -64,7 +64,7 @@ module Percy
             # If no job is scheduled, this will block for DEFAULT_WAIT_TIME seconds then return nil.
             # We handle these regular timeouts, clear our idle status, and then start over.
             job_id = hub.wait_for_job(worker_id: worker_id)
-            if !job_id
+            unless job_id
               hub.clear_worker_idle(worker_id: worker_id)
               next
             end
@@ -93,7 +93,7 @@ module Percy
                   yield(action, options)
                 end
               else
-                raise NotImplementedError.new("Unhandled job type: #{action}")
+                raise NotImplementedError, "Unhandled job type: #{action}"
               end
             end
 
@@ -113,11 +113,9 @@ module Percy
           # failures, soft or hard (such as being SIGKILLed).
           raise e
         ensure
-          heartbeat_thread && heartbeat_thread.kill
+          heartbeat_thread&.kill
         end
       end
     end
   end
 end
-
-

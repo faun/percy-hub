@@ -45,18 +45,18 @@ RSpec.describe Percy::Hub::Worker do
       thread.join(1)
 
       expect(got_action).to eq(:process_comparison)
-      expect(got_options).to eq({
+      expect(got_options).to eq(
         num_retries: 0,
         hub_job_id: 1,
         takeover_job_release: false,
         comparison_id: 123,
-      })
+      )
       expect(hub.redis.zcount('global:locks:claimed', '-inf', '+inf')).to eq(0)
     end
 
     it 'supports manual lock release' do
       thread = Thread.new do
-        worker.run(times: 1) do |action, options|
+        worker.run(times: 1) do |_action, options|
           options[:takeover_job_release] = true
         end
       end
@@ -79,7 +79,7 @@ RSpec.describe Percy::Hub::Worker do
     it 'raises exceptions and exits, waits for reaping' do
       thread = Thread.new do
         expect do
-          worker.run(times: 1) do |action, options|
+          worker.run(times: 1) do |_action, _options|
             raise RuntimeError
           end
         end.to raise_error(RuntimeError)
@@ -88,7 +88,7 @@ RSpec.describe Percy::Hub::Worker do
       wait_until_any_worker_is_running
       insert_and_schedule_random_job
       thread.join(1)
-      expect(hub.redis.get('job:1:data')).to be  # Data is not cleaned up, will be reaped.
+      expect(hub.redis.get('job:1:data')).to be # Data is not cleaned up, will be reaped.
     end
 
     it 'removes idle status when re-hooking after wait_for_job' do
@@ -100,10 +100,10 @@ RSpec.describe Percy::Hub::Worker do
       expect(worker).to receive(:hub).at_least(:once).times.and_return(failhub)
 
       thread = Thread.new do
-        worker.run(times: 1) { }
+        worker.run(times: 1) {}
       end
 
-      sleep 0.2  # Blarg, wait for worker to be up and hanging on wait_for_job sleep above.
+      sleep 0.2 # Blarg, wait for worker to be up and hanging on wait_for_job sleep above.
       expect(hub.redis.zcard('workers:idle')).to eq(1)
       thread.join(1)
       expect(hub.redis.zcard('workers:idle')).to eq(0)
@@ -115,7 +115,7 @@ RSpec.describe Percy::Hub::Worker do
       expect(worker).to receive(:hub).at_least(:once).times.and_return(failhub)
       thread = Thread.new do
         begin
-          worker.run(times: 1) { }
+          worker.run(times: 1) {}
         rescue Exception => e
           e
         end
@@ -129,7 +129,7 @@ RSpec.describe Percy::Hub::Worker do
 
     it 'runs a heartbeat thread alongside the worker' do
       thread = Thread.new do
-        worker.run(times: 1) { }
+        worker.run(times: 1) {}
       end
 
       wait_until_any_worker_is_running
@@ -145,7 +145,7 @@ RSpec.describe Percy::Hub::Worker do
       allow_any_instance_of(Percy::Hub).to receive(:get_job_data).and_return nil
 
       thread = Thread.new do
-        worker.run(times: 1) { }
+        worker.run(times: 1) {}
       end
 
       wait_until_any_worker_is_running
