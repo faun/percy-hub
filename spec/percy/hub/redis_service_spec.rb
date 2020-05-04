@@ -47,12 +47,12 @@ RSpec.describe Percy::Hub::RedisService do
       end
     end
 
-    context 'with REDIS_URL environment variable' do
+    context 'with HUB_REDIS_URL environment variable' do
       around(:each) do |ex|
-        original_redis_url = ENV['REDIS_URL']
-        ENV['REDIS_URL'] = redis_url
+        original_redis_url = ENV['HUB_REDIS_URL']
+        ENV['HUB_REDIS_URL'] = redis_url
         ex.run
-        ENV['REDIS_URL'] = original_redis_url
+        ENV['HUB_REDIS_URL'] = original_redis_url
       end
 
       let(:scheme) { 'redis://' }

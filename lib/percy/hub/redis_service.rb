@@ -23,8 +23,8 @@ module Percy
           reconnect_attempts: 2,
           tcp_keepalive: 10,
         }
-        if ENV['REDIS_URL']
-          options[:url] = ENV['REDIS_URL'] if ENV['REDIS_URL']
+        if ENV['HUB_REDIS_URL']
+          options[:url] = ENV['HUB_REDIS_URL']
         else
           options[:host] = ENV['REDIS_HOST'] if ENV['REDIS_HOST']
           options[:port] = Integer(ENV['REDIS_PORT']) if ENV['REDIS_PORT']
