@@ -23,6 +23,8 @@ module Percy
           reconnect_attempts: 2,
           tcp_keepalive: 10,
         }
+        # If REDIS_HOST is defined, use the legacy environment variables
+        # Otherwise, use HUB_REDIS_URL (if defined)
         if ENV['REDIS_HOST']
           options[:host] = ENV['REDIS_HOST'] if ENV['REDIS_HOST']
           options[:port] = Integer(ENV['REDIS_PORT']) if ENV['REDIS_PORT']
