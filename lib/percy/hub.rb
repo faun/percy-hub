@@ -188,7 +188,6 @@ require 'percy/hub/redis_service'
 module Percy
   class Hub
     include Percy::Hub::RedisService
-
     # The default blocking time for certain "hot" loops that wait on BRPOPLPUSH calls.
     DEFAULT_TIMEOUT_SECONDS = 5
 
@@ -235,6 +234,10 @@ module Percy
 
     def stats
       @stats ||= Percy::Stats.new
+    end
+
+    def with_connection(&blk)
+      yield blk
     end
 
     def get_global_locks_limit

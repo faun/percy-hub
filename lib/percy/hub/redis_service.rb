@@ -4,8 +4,19 @@ require 'percy/redis_client'
 module Percy
   class Hub
     module RedisService
+      REDIS_POOL_SIZE = Integer(ENV['REDIS_POOL_SIZE'] || 5)
+      REDIS_POOL_TIMEOUT = Integer(ENV['REDIS_POOL_TIMEOUT'] || 3)
+      REDIS_POOL_OPTIONS = {
+        size: REDIS_POOL_SIZE,
+        timeout: REDIS_POOL_TIMEOUT,
+      }.freeze
+
       def redis(options = {})
-        @redis ||= redis_client(default_redis_options.merge(options)).client
+        @redis ||= ConnectionPool::Wrapper.new(REDIS_POOL_OPTIONS) { redis_connection(options) }
+      end
+
+      def redis_connection(options = {})
+        @redis_connection ||= redis_client(default_redis_options.merge(options)).client
       end
 
       def disconnect_redis
