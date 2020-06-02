@@ -4,12 +4,12 @@
 cd "$(dirname "$0")" || exit 1
 CURDIR=$(pwd)
 
-[ -z "$BUILDKITE_COMMIT" ] && echo "[ERROR] Need to set BUILDKITE_COMMIT environment variable." && exit 1
+# Use the first argument as the image tag. If an argument wasn't provided,
+# use $BUILDKITE_COMMIT environment variable as the image tag.
+TAG="${1:-$BUILDKITE_COMMIT}"
+[ -z "$TAG" ] && echo "Usage: $0 <commit>" && exit 1
 
-TAG="$BUILDKITE_COMMIT"
-echo "Building: $IMAGE:$TAG"
-
-function safe_git_pull_origin_master {
+function safe_git_pull_origin_master() {
   if [ -n "$(git status --porcelain)" ]; then
     echo 'Local changes detected, aborting!'
     exit 1
@@ -17,11 +17,19 @@ function safe_git_pull_origin_master {
   git pull origin master
 }
 
-
 IMAGE="gcr.io/percy-prod/hub"
 cd "$CURDIR/.." && safe_git_pull_origin_master && cd "$CURDIR/.." || exit
 gcloud auth configure-docker
-docker build -f Dockerfile -t "$IMAGE:$TAG" ./
+
+echo "Building: $IMAGE:$TAG"
+
+docker build \
+  -f Dockerfile \
+  --cache-from "$IMAGE:$TAG" \
+  --build-arg "SOURCE_COMMIT_SHA=$TAG" \
+  -t "$IMAGE:$TAG" \
+  ./
+
 docker tag "$IMAGE:$TAG" "$IMAGE:latest"
 docker push "$IMAGE:$TAG"
 docker push "$IMAGE:latest"

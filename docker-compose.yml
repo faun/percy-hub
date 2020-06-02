@@ -1,5 +1,5 @@
 # For dev/test.
-version: '2'
+version: "2.2"
 services:
   redis:
     image: redis:4-alpine
@@ -11,9 +11,12 @@ services:
       args:
         # Override bundle flags so that development/test dependencies are installed.
         - BUNDLE_INSTALL_FLAGS=--jobs 5
+        - SOURCE_COMMIT_SHA
     depends_on:
       - redis
     environment:
       - REDIS_HOST=redis
+      - SENTRY_DSN
+      - PERCY_ENV
     volumes:
       - .:/app/src

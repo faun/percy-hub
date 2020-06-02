@@ -1,5 +1,6 @@
 build:
-	docker-compose build
+	docker-compose build \
+		--build-arg SOURCE_COMMIT_SHA=$$(git describe --always --tags --dirty --abbrev=7)
 
 down:
 	docker-compose down
@@ -33,4 +34,4 @@ rubocop: _set-container-permissions
 	docker-compose exec hub /sbin/setuser app bundle exec rubocop -D --parallel -f emacs -o ./tmp/rubocop/output.txt
 
 publish:
-	@bin/publish.sh
+	@bin/publish.sh "$$(git describe --always --tags --dirty --abbrev=7)"
