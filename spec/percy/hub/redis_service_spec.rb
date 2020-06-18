@@ -2,8 +2,83 @@ RSpec.describe Percy::Hub::RedisService do
   let(:hub) { Percy::Hub.new }
 
   describe '#redis' do
-    it 'returns a client' do
-      expect(hub.redis).to be
+    context 'without any environment variables' do
+      let(:client_connection) { hub.redis.connection }
+      let(:host) { 'redis' }
+      let(:port) { 6379 }
+      let(:db) { 7 }
+
+      it 'has the default configuration' do
+        expect(client_connection.dig(:host)).to eq(host)
+        expect(client_connection.dig(:port)).to eq(port)
+        expect(client_connection.dig(:db)).to eq(db)
+        expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+      end
+
+      it 'returns a client' do
+        expect(hub.redis).to be
+      end
+    end
+
+    context 'with legacy redis environment variables' do
+      around(:each) do |ex|
+        original_redis_host = ENV['REDIS_HOST']
+        original_redis_db = ENV['REDIS_DB']
+        original_redis_port = ENV['REDIS_PORT']
+        ENV['REDIS_HOST'] = host
+        ENV['REDIS_DB'] = db.to_s
+        ENV['REDIS_PORT'] = port.to_s
+        ex.run
+        ENV['REDIS_HOST'] = original_redis_host
+        ENV['REDIS_DB'] = original_redis_db
+        ENV['REDIS_PORT'] = original_redis_port
+      end
+
+      let(:host) { 'redis' }
+      let(:port) { 6379 }
+      let(:db) { 7 }
+      let(:client_connection) { hub.redis.connection }
+
+      it 'has the correct configuration' do
+        expect(client_connection.dig(:host)).to eq(host)
+        expect(client_connection.dig(:port)).to eq(port)
+        expect(client_connection.dig(:db)).to eq(db)
+        expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+      end
+
+      it 'returns a client' do
+        expect(hub.redis).to be
+      end
+    end
+
+    context 'when REDIS_HOST is not defined but HUB_REDIS_URL is' do
+      around(:each) do |ex|
+        original_redis_host = ENV['REDIS_HOST']
+        original_redis_url = ENV['HUB_REDIS_URL']
+        ENV['REDIS_HOST'] = nil
+        ENV['HUB_REDIS_URL'] = redis_url
+        ex.run
+        ENV['HUB_REDIS_URL'] = original_redis_url
+        ENV['REDIS_HOST'] = original_redis_host
+      end
+
+      let(:scheme) { 'redis://' }
+      let(:host) { 'redis' }
+      let(:port) { 6379 }
+      let(:db) { 7 }
+      let(:redis_url) { "#{scheme}#{host}:#{port}/#{db}" }
+      let(:client_connection) { hub.redis.connection }
+
+      it 'has the correct configuration' do
+        expect(client_connection.dig(:host)).to eq(host)
+        expect(client_connection.dig(:port)).to eq(port)
+        expect(client_connection.dig(:db)).to eq(db)
+        expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+      end
+
+      it 'returns a client' do
+        expect(hub.redis).to be
+      end
     end
   end
 

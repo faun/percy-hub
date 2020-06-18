@@ -15,7 +15,14 @@ services:
     depends_on:
       - redis
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST
+      - REDIS_PORT
+      - REDIS_DB
+      - REDIS_PASSWORD
+      - HUB_REDIS_URL=redis://redis:6379
+      - REDIS_SSL_CERTIFICATE_AUTHORITY_PATH
+      - REDIS_SSL_CLIENT_CERTIFICATE_PATH
+      - REDIS_SSL_PRIVATE_KEY_PATH
       - SENTRY_DSN
       - PERCY_ENV
     volumes:

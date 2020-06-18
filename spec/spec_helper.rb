@@ -28,7 +28,7 @@ RSpec.configure do |config|
   config.before(:all) { ENV['PERCY_ENV'] = 'test' }
 
   # Use DB #7 for test data and flush before each test run.
-  config.before(:all) { ENV['REDIS_DB'] = '7' }
+  config.before(:all) { ENV['HUB_REDIS_URL'] = 'redis://redis:6379/7' }
   config.before(:each) { Percy::Hub.new.redis.flushdb }
 
   config.filter_run :focus
