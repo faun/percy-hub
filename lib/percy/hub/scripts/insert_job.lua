@@ -5,6 +5,7 @@ local job_data_key = KEYS[4]
 local job_build_id_key = KEYS[5]
 local job_subscription_id_key = KEYS[6]
 local job_num_retries_key = KEYS[7]
+local job_serialized_trace_key = KEYS[8]
 
 local job_id = ARGV[1]
 local build_id = ARGV[2]
@@ -12,6 +13,7 @@ local subscription_id = ARGV[3]
 local num_retries = ARGV[4]
 local now = ARGV[5]
 local job_data = ARGV[6]
+local serialized_trace = ARGV[7]
 
 -- The score in builds:active is the first insertion time of build_id into builds:active. If the
 -- build already exists in this sorted set when the next snapshot job is inserted, the score is
@@ -31,7 +33,9 @@ redis.call('SET', job_num_retries_key, num_retries)
 redis.call('SET', job_data_key, job_data)
 redis.call('SET', job_build_id_key, build_id)
 redis.call('SET', job_subscription_id_key, subscription_id)
-redis.call('SET', job_subscription_id_key, subscription_id)
+
+-- Set the trace key
+redis.call('SET', job_serialized_trace_key, serialized_trace)
 
 -- Add the job ID to the sorted set of build jobs.
 redis.call('LPUSH', build_jobs_new_key, job_id)

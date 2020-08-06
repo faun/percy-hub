@@ -268,7 +268,8 @@ module Percy
     end
 
     # Inserts a new job.
-    def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil, num_retries: nil)
+    def insert_job(job_data:, build_id:, subscription_id:, inserted_at: nil, num_retries: nil,
+      serialized_trace: nil)
       # Sanity checks to make sure we don't silently inject nils somewhere.
       raise ArgumentError, 'job_data is required' unless job_data
       raise ArgumentError, 'build_id is required' unless build_id
@@ -291,6 +292,7 @@ module Percy
           "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
           "job:#{job_id}:num_retries",
+          "job:#{job_id}:serialized_trace",
         ]
         args = [
           job_id,
@@ -299,6 +301,7 @@ module Percy
           num_retries,
           inserted_at || Time.now.to_i,
           job_data,
+          serialized_trace,
         ]
 
         _run_script('insert_job.lua', keys: keys, args: args)
@@ -733,6 +736,14 @@ module Percy
       Integer(redis.get("job:#{job_id}:num_retries") || 0)
     end
 
+    # Gets serialized trace data related to the job
+    def get_job_serialized_trace(job_id:)
+      trace = redis.get("job:#{job_id}:serialized_trace")
+      return nil if trace.to_s.empty?
+
+      trace
+    end
+
     # Marks the worker's current job as complete.
     #
     # @return [nil, Integer]
@@ -773,6 +784,7 @@ module Percy
           "job:#{job_id}:build_id",
           "job:#{job_id}:subscription_id",
           "job:#{job_id}:num_retries",
+          "job:#{job_id}:serialized_trace",
         ]
         args = [
           job_id,

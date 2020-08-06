@@ -69,22 +69,50 @@ RSpec.describe Percy::Hub do
   end
 
   describe '#insert_job' do
-    it 'inserts a snapshot job and updates relevant keys' do
-      expect(hub.redis.get('jobs:created:counter')).to be_nil
+    context 'without serialized_trace' do
+      it 'inserts a snapshot job and updates relevant keys' do
+        expect(hub.redis.get('jobs:created:counter')).to be_nil
 
-      result = hub.insert_job(
-        job_data: 'process_comparison:123', build_id: 234, subscription_id: 345,
-      )
-      expect(result).to eq(1)
-      expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
-      expect(hub.redis.zscore('builds:active', 234)).to be > 1
-      expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
-      expect(hub.redis.lrange('build:234:jobs:new', 0, 10)).to eq(['1'])
+        result = hub.insert_job(
+          job_data: 'process_comparison:123',
+          build_id: 234,
+          subscription_id: 345,
+        )
+        expect(result).to eq(1)
+        expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
+        expect(hub.redis.zscore('builds:active', 234)).to be > 1
+        expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
+        expect(hub.redis.lrange('build:234:jobs:new', 0, 10)).to eq(['1'])
 
-      expect(hub.redis.get('job:1:data')).to eq('process_comparison:123')
-      expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
-      expect(hub.redis.get('job:1:build_id').to_i).to eq(234)
-      expect(hub.redis.get('job:1:num_retries').to_i).to eq(0)
+        expect(hub.redis.get('job:1:data')).to eq('process_comparison:123')
+        expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
+        expect(hub.redis.get('job:1:build_id').to_i).to eq(234)
+        expect(hub.redis.get('job:1:num_retries').to_i).to eq(0)
+      end
+    end
+
+    context 'with serialized_trace' do
+      it 'inserts a snapshot job and updates relevant keys' do
+        expect(hub.redis.get('jobs:created:counter')).to be_nil
+
+        result = hub.insert_job(
+          job_data: 'process_comparison:123',
+          build_id: 234,
+          subscription_id: 345,
+          serialized_trace: '123',
+        )
+        expect(result).to eq(1)
+        expect(hub.redis.get('jobs:created:counter').to_i).to eq(1)
+        expect(hub.redis.zscore('builds:active', 234)).to be > 1
+        expect(hub.redis.get('build:234:subscription_id').to_i).to eq(345)
+        expect(hub.redis.lrange('build:234:jobs:new', 0, 10)).to eq(['1'])
+
+        expect(hub.redis.get('job:1:data')).to eq('process_comparison:123')
+        expect(hub.redis.get('job:1:subscription_id').to_i).to eq(345)
+        expect(hub.redis.get('job:1:build_id').to_i).to eq(234)
+        expect(hub.redis.get('job:1:num_retries').to_i).to eq(0)
+        expect(hub.redis.get('job:1:serialized_trace')).to eq('123')
+      end
     end
 
     it 'is idempotent and re-uses the inserted_at score if present' do
@@ -137,6 +165,23 @@ RSpec.describe Percy::Hub do
 
     it 'safely handles when num_retries does not exist (legacy backwards-compatibility)' do
       expect(hub.get_job_num_retries(job_id: 1)).to eq(0)
+    end
+  end
+
+  describe '#get_job_serialized_trace' do
+    it 'returns the serialized trace if it was passed while inserting job' do
+      hub.insert_job(
+        job_data: 'process_comparison:123',
+        build_id: 234,
+        subscription_id: 345,
+        serialized_trace: '123',
+      )
+      expect(hub.get_job_serialized_trace(job_id: 1)).to eq('123')
+    end
+
+    it 'returns null if no trace was passed while inserting job' do
+      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+      expect(hub.get_job_serialized_trace(job_id: 1)).to eq(nil)
     end
   end
 
@@ -818,19 +863,50 @@ RSpec.describe Percy::Hub do
   end
 
   describe '#release_job' do
-    it 'removes job related keys' do
-      hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
-      expect(hub.redis.get('job:1:data')).to be
-      expect(hub.redis.get('job:1:build_id')).to be
-      expect(hub.redis.get('job:1:subscription_id')).to be
-      expect(hub.redis.get('job:1:num_retries')).to be
+    context 'without serialized_trace' do
+      it 'removes job related keys' do
+        hub.insert_job(
+          job_data: 'process_comparison:123',
+          build_id: 234,
+          subscription_id: 345,
+        )
+        expect(hub.redis.get('job:1:data')).to be
+        expect(hub.redis.get('job:1:build_id')).to be
+        expect(hub.redis.get('job:1:subscription_id')).to be
+        expect(hub.redis.get('job:1:num_retries')).to be
+        expect(hub.redis.get('job:1:serialized_trace')).to be_empty
 
-      expect(hub.stats).to receive(:time).once.with('hub.methods.release_job').and_call_original
-      hub.release_job(job_id: 1)
-      expect(hub.redis.get('job:1:data')).to be_nil
-      expect(hub.redis.get('job:1:build_id')).to be_nil
-      expect(hub.redis.get('job:1:subscription_id')).to be_nil
-      expect(hub.redis.get('job:1:num_retries')).to be_nil
+        expect(hub.stats).to receive(:time).once.with('hub.methods.release_job').and_call_original
+        hub.release_job(job_id: 1)
+        expect(hub.redis.get('job:1:data')).to be_nil
+        expect(hub.redis.get('job:1:build_id')).to be_nil
+        expect(hub.redis.get('job:1:subscription_id')).to be_nil
+        expect(hub.redis.get('job:1:num_retries')).to be_nil
+      end
+    end
+
+    context 'with serialized_trace' do
+      it 'deletes serialized trace key' do
+        hub.insert_job(
+          job_data: 'process_comparison:123',
+          build_id: 234,
+          subscription_id: 345,
+          serialized_trace: '123',
+        )
+        expect(hub.redis.get('job:1:data')).to be
+        expect(hub.redis.get('job:1:build_id')).to be
+        expect(hub.redis.get('job:1:subscription_id')).to be
+        expect(hub.redis.get('job:1:num_retries')).to be
+        expect(hub.redis.get('job:1:serialized_trace')).to be
+
+        expect(hub.stats).to receive(:time).once.with('hub.methods.release_job').and_call_original
+        hub.release_job(job_id: 1)
+        expect(hub.redis.get('job:1:data')).to be_nil
+        expect(hub.redis.get('job:1:build_id')).to be_nil
+        expect(hub.redis.get('job:1:subscription_id')).to be_nil
+        expect(hub.redis.get('job:1:num_retries')).to be_nil
+        expect(hub.redis.get('job:1:serialized_trace')).to be_nil
+      end
     end
 
     it 'releases subscription locks' do

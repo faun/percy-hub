@@ -81,6 +81,7 @@ module Percy
               options = {
                 num_retries: hub.get_job_num_retries(job_id: job_id),
                 hub_job_id: job_id,
+                serialized_trace: hub.get_job_serialized_trace(job_id: job_id),
 
                 # Jobs can mutate this option to true to manually handle job
                 # lock releases.

@@ -12,7 +12,12 @@ RSpec.describe Percy::Hub::Worker do
   end
 
   def insert_and_schedule_random_job
-    hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
+    hub.insert_job(
+      job_data: 'process_comparison:123',
+      build_id: 234,
+      subscription_id: 345,
+      serialized_trace: '123',
+    )
     hub._enqueue_jobs
     hub._schedule_next_job
   end
@@ -50,6 +55,7 @@ RSpec.describe Percy::Hub::Worker do
         hub_job_id: 1,
         takeover_job_release: false,
         comparison_id: 123,
+        serialized_trace: '123',
       )
       expect(hub.redis.zcount('global:locks:claimed', '-inf', '+inf')).to eq(0)
     end
