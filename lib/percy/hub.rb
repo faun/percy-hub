@@ -190,11 +190,7 @@ module Percy
     include Percy::Hub::RedisService
 
     def initialize(options = {})
-      @redis_options = options
-    end
-
-    def redis
-      redis_client(@redis_options)
+      configure_redis_options(options)
     end
 
     # The default blocking time for certain "hot" loops that wait on BRPOPLPUSH calls.

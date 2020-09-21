@@ -2,6 +2,21 @@ RSpec.describe Percy::Hub::RedisService do
   let(:hub) { Percy::Hub.new }
 
   describe '#redis' do
+    context 'with an an abstract client' do
+      let(:test_class) do
+        Class.new do
+          include Percy::Hub::RedisService
+        end
+      end
+
+      it 'raises an error without redis_options defined' do
+        expect { test_class.new.redis }.to raise_error(
+          RuntimeError,
+          'Missing redis configuration',
+        )
+      end
+    end
+
     context 'without any environment variables' do
       let(:client_connection) { hub.redis.connection }
       let(:host) { 'redis' }
@@ -44,6 +59,40 @@ RSpec.describe Percy::Hub::RedisService do
         expect(client_connection.dig(:port)).to eq(port)
         expect(client_connection.dig(:db)).to eq(db)
         expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+      end
+
+      it 'returns a client' do
+        expect(hub.redis).to be
+      end
+    end
+
+    context 'with legacy redis environment variables and an explicit url' do
+      around(:each) do |ex|
+        original_redis_host = ENV['REDIS_HOST']
+        original_redis_db = ENV['REDIS_DB']
+        original_redis_port = ENV['REDIS_PORT']
+        ENV['REDIS_HOST'] = host
+        ENV['REDIS_DB'] = db.to_s
+        ENV['REDIS_PORT'] = port.to_s
+        ex.run
+        ENV['REDIS_HOST'] = original_redis_host
+        ENV['REDIS_DB'] = original_redis_db
+        ENV['REDIS_PORT'] = original_redis_port
+      end
+
+      let(:redis_url) { "redis://#{host}:#{port}/10" }
+      let(:hub) { Percy::Hub.new(url: redis_url, timeout: 30) }
+      let(:host) { 'redis' }
+      let(:port) { 6379 }
+      let(:db) { 7 }
+      let(:client_connection) { hub.redis.connection }
+
+      it 'has the correct configuration' do
+        expect(client_connection.dig(:host)).to eq(host)
+        expect(client_connection.dig(:port)).to eq(port)
+        expect(client_connection.dig(:db)).to eq(10)
+        expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+        expect(client_connection.dig(:id)).to eq(redis_url)
       end
 
       it 'returns a client' do

@@ -4,19 +4,56 @@ require 'percy/redis_client'
 module Percy
   class Hub
     module RedisService
-      def redis_client(options = {})
-        @redis_client ||= redis_connection(default_redis_options.merge(options)).client
+      def redis
+        raise 'Missing redis configuration' unless @redis_options
+
+        @redis ||= redis_connection(@redis_options).client
       end
 
       def disconnect_redis
-        return unless @redis_client
+        return unless @redis
 
-        @redis_client.close
-        @redis_client = nil
+        @redis.close
+        @redis = nil
       end
 
-      private def default_redis_options
-        options = {
+      def configure_redis_options(options = {})
+        options.transform_keys! do |key|
+          begin
+            key.to_sym
+          rescue StandardError
+            key
+          end
+        end
+        # If options are explicitly defined, use the values provided in the
+        # options hash
+        #
+        # Otherwise, if REDIS_HOST is defined, use the legacy environment
+        # variables: REDIS_HOST, REDIS_PORT, REDIS_DB and REDIS_PASSWORD
+        #
+        # Otherwise, use HUB_REDIS_URL (if defined)
+
+        if options.empty?
+          if ENV['REDIS_HOST']
+            options[:host] = ENV['REDIS_HOST'] if ENV['REDIS_HOST']
+            options[:port] = Integer(ENV['REDIS_PORT']) if ENV['REDIS_PORT']
+            options[:db] = Integer(ENV['REDIS_DB']) if ENV['REDIS_DB']
+            options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
+          elsif ENV['HUB_REDIS_URL']
+            options[:url] = ENV['HUB_REDIS_URL']
+          end
+          @redis_options = options
+        else
+          @redis_options = default_connection_options.merge(options)
+        end
+      end
+
+      private def redis_connection(options)
+        Percy::RedisClient.new(options)
+      end
+
+      private def default_connection_options
+        {
           # These need to be longer than the longest BRPOPLPUSH timeout.
           # Defaults are 5, 5, and 1.
           timeout: 20,
@@ -24,21 +61,6 @@ module Percy
           reconnect_attempts: 2,
           tcp_keepalive: 10,
         }
-        # If REDIS_HOST is defined, use the legacy environment variables
-        # Otherwise, use HUB_REDIS_URL (if defined)
-        if ENV['REDIS_HOST']
-          options[:host] = ENV['REDIS_HOST'] if ENV['REDIS_HOST']
-          options[:port] = Integer(ENV['REDIS_PORT']) if ENV['REDIS_PORT']
-          options[:db] = Integer(ENV['REDIS_DB']) if ENV['REDIS_DB']
-          options[:password] = ENV['REDIS_PASSWORD'] if ENV['REDIS_PASSWORD']
-        elsif ENV['HUB_REDIS_URL']
-          options[:url] = ENV['HUB_REDIS_URL']
-        end
-        options
-      end
-
-      private def redis_connection(options)
-        Percy::RedisClient.new(options)
       end
     end
   end
