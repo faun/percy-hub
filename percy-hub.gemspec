@@ -17,6 +17,7 @@ Gem::Specification.new do |spec|
   spec.test_files    = spec.files.grep(/^(test|spec|features)\//)
   spec.require_paths = ['lib']
 
+  spec.add_dependency 'honeycomb-beeline'
   spec.add_dependency 'percy-common', '~> 3.1', '>= 3.1.4'
   spec.add_dependency 'redis', '>= 4.1.3'
   spec.add_dependency 'sentry-raven', '>= 2.13.0', '< 3.0'
