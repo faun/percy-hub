@@ -25,5 +25,7 @@ services:
       - REDIS_SSL_PRIVATE_KEY_PATH
       - SENTRY_DSN
       - PERCY_ENV
+      - HONEYCOMB_WRITE_KEY=bff30c6055a5df0ba8e87e1f380c65dc
+      - HONEYCOMB_DATASET=sidekiq-dev
     volumes:
       - .:/app/src

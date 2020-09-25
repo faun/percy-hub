@@ -184,6 +184,7 @@ require 'percy/logger'
 require 'percy/stats'
 require 'percy/hub/version'
 require 'percy/hub/redis_service'
+require 'percy/hub/honeycomb_client'
 
 module Percy
   class Hub
