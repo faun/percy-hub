@@ -670,8 +670,8 @@ module Percy
           # Non-blocking push the job from jobs:scheduling to the selected worker's runnable queue.
           scheduled_job_id = redis.rpoplpush('jobs:scheduling', "worker:#{worker_id}:runnable")
 
+          job_data = get_job_data(job_id: job_id)
           Percy.logger.debug do
-            job_data = get_job_data(job_id: job_id)
             "[hub:schedule_jobs] Scheduled job #{job_id} (#{job_data}) on worker #{worker_id}"
           end
           if scheduled_job_id != job_id
