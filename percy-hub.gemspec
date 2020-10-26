@@ -26,6 +26,7 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'percy-common', '~> 3.1', '>= 3.1.4'
   spec.add_dependency 'redis', '>= 4.1.3'
+  spec.add_dependency 'connection_pool'
   spec.add_dependency 'sentry-raven', '>= 2.13.0', '< 3.0'
 
   spec.add_development_dependency 'bundler', '~> 2.1.4'

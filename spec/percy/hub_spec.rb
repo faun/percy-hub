@@ -732,13 +732,14 @@ RSpec.describe Percy::Hub do
       expect(hub.redis.llen('jobs:scheduling')).to eq(0)
 
       # Manually force the enqueued job into jobs:scheduling.
-      hub.redis.rpoplpush('jobs:runnable', 'jobs:scheduling')
+      hub.redis_pool.with do |conn|
+        conn.rpoplpush('jobs:runnable', 'jobs:scheduling')
+        expect(hub._schedule_next_job).to eq(0)
 
-      expect(hub._schedule_next_job).to eq(0)
-
-      expect(hub.redis.llen('jobs:runnable')).to eq(0)
-      expect(hub.redis.llen('jobs:scheduling')).to eq(0)
-      expect(hub.redis.llen("worker:#{worker_id}:runnable")).to eq(1)
+        expect(conn.llen('jobs:runnable')).to eq(0)
+        expect(conn.llen('jobs:scheduling')).to eq(0)
+        expect(conn.llen("worker:#{worker_id}:runnable")).to eq(1)
+      end
     end
   end
 
@@ -768,7 +769,7 @@ RSpec.describe Percy::Hub do
     end
 
     it 'returns nil if a redis timeout occurs' do
-      expect(hub.redis).to receive(:brpoplpush)
+      expect_any_instance_of(Redis).to receive(:brpoplpush)
         .with(
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
@@ -968,7 +969,9 @@ RSpec.describe Percy::Hub do
 
       year = Time.now.strftime('%Y')
       month = Time.now.strftime('%m')
-      expect(hub.redis.get("subscription:345:usage:#{year}:#{month}:counter")).to eq('2')
+      hub.redis_pool.with do |conn|
+        expect(conn.get("subscription:345:usage:#{year}:#{month}:counter")).to eq('2')
+      end
     end
 
     it 'accepts an increment count' do
