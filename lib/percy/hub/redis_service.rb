@@ -1,13 +1,30 @@
 require 'redis'
 require 'percy/redis_client'
+require 'connection_pool'
 
 module Percy
   class Hub
     module RedisService
+      def redis_pool
+        @redis_pool ||= connection_pool
+      end
+
       def redis
+        @redis ||= ::ConnectionPool::Wrapper.new(size: 5, timeout: 5) do
+          single_connection
+        end
+      end
+
+      private def single_connection
         raise 'Missing redis configuration' unless @redis_options
 
-        @redis ||= redis_connection(@redis_options).client
+        redis_connection(@redis_options).client
+      end
+
+      private def connection_pool
+        ::ConnectionPool.new(size: 5, timeout: 5) do
+          single_connection
+        end
       end
 
       def disconnect_redis

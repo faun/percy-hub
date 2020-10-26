@@ -1,6 +1,39 @@
 RSpec.describe Percy::Hub::RedisService do
   let(:hub) { Percy::Hub.new }
 
+  describe '#redis_pool' do
+    context 'with an an abstract client' do
+      let(:test_class) do
+        Class.new do
+          include Percy::Hub::RedisService
+        end
+      end
+
+      it 'raises an error without redis_options defined' do
+        expect { test_class.new.redis_pool.with(&:info) }.to raise_error(
+          RuntimeError,
+          'Missing redis configuration',
+        )
+      end
+
+      context 'with defined options' do
+        let(:redis_url) { "redis://#{host}:#{port}/10" }
+        let(:hub) { Percy::Hub.new(url: redis_url, timeout: 30) }
+        let(:host) { 'redis' }
+        let(:port) { 6379 }
+        let(:db) { 10 }
+        let(:client_connection) { hub.redis_pool.with(&:connection) }
+
+        it 'has the default configuration' do
+          expect(client_connection.dig(:host)).to eq(host)
+          expect(client_connection.dig(:port)).to eq(port)
+          expect(client_connection.dig(:db)).to eq(db)
+          expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+        end
+      end
+    end
+  end
+
   describe '#redis' do
     context 'with an an abstract client' do
       let(:test_class) do
@@ -10,7 +43,7 @@ RSpec.describe Percy::Hub::RedisService do
       end
 
       it 'raises an error without redis_options defined' do
-        expect { test_class.new.redis }.to raise_error(
+        expect { test_class.new.redis.connection }.to raise_error(
           RuntimeError,
           'Missing redis configuration',
         )
