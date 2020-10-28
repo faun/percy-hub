@@ -17,7 +17,7 @@ RSpec.describe Percy::Hub do
   describe 'subscription lock limits' do
     describe '#set_subscription_locks_limit' do
       it 'sets the subscription lock limit' do
-        result = hub.set_subscription_locks_limit(subscription_id: 'foo:123', limit: 5)
+        hub.set_subscription_locks_limit(subscription_id: 'foo:123', limit: 5)
         expect(hub.redis.get('subscription:foo:123:locks:limit').to_i).to eq(5)
       end
 
@@ -48,7 +48,7 @@ RSpec.describe Percy::Hub do
   describe 'global locks limit' do
     describe '#set_global_locks_limit' do
       it 'sets the global lock limit' do
-        result = hub.set_global_locks_limit(limit: 5)
+        hub.set_global_locks_limit(limit: 5)
         expect(hub.redis.get('global:locks:limit').to_i).to eq(5)
       end
 
@@ -335,7 +335,7 @@ RSpec.describe Percy::Hub do
     end
 
     it 'returns hit_global_lock_limit when global limit is hit' do
-      worker_id_1, worker_id_2, worker_id_3 = create_idle_test_workers(3)
+      create_idle_test_workers(3)
 
       first_job_id = hub.insert_job(
         job_data: 'process_comparison:123',
@@ -368,7 +368,7 @@ RSpec.describe Percy::Hub do
     end
 
     it 'returns hit_lock_limit when subscription lock limit is exceeded' do
-      worker_id_1, worker_id_2, worker_id_3 = create_idle_test_workers(3)
+      create_idle_test_workers(3)
 
       first_job_id = hub.insert_job(
         job_data: 'process_comparison:123',
@@ -491,7 +491,7 @@ RSpec.describe Percy::Hub do
     it 'works if the machine started_at time has expired' do
       expect(hub.stats).to_not receive(:histogram)
       hub.redis.del("machine:#{machine_id}:started_at")
-      worker_id = hub.register_worker(machine_id: machine_id)
+      hub.register_worker(machine_id: machine_id)
     end
 
     it 'fails if given nil machine_id' do
@@ -679,7 +679,7 @@ RSpec.describe Percy::Hub do
 
   describe '#_schedule_next_job' do
     it 'returns 0 and pops job from jobs:runnable to an idle worker' do
-      first_worker_id = hub.register_worker(machine_id: machine_id)
+      hub.register_worker(machine_id: machine_id)
       second_worker_id = hub.register_worker(machine_id: machine_id)
       hub.set_worker_idle(worker_id: second_worker_id)
 
