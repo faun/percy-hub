@@ -378,12 +378,12 @@ module Percy
               # Optimization: don't run the full LUA script if there are no possible jobs to enqueue.
               # We also handle returning 0 inside the script if no jobs exist in case there is a race.
               has_new_jobs = conn.llen("build:#{build_id}:jobs:new") > 0
-              job_result = if has_new_jobs
-                             _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
-                           else
-                             0
-                           end
-
+              job_result =
+                if has_new_jobs
+                  _enqueue_next_job(build_id: build_id, subscription_id: subscription_id)
+                else
+                  0
+                end
               case job_result
               when 1
                 # A job was successfully enqueued from this build, there may be more.
