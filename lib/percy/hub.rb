@@ -372,7 +372,7 @@ module Percy
           # We've iterated through all the active builds and successfully checked and/or enqueued
           # all potential jobs for all idle workers. Sleep for a small amount of time before
           # checking again to see if locks have been released or idle capacity is available.
-          return 0.5 unless build_id
+          return 0.05 unless build_id
 
           # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")

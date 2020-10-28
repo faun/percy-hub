@@ -193,8 +193,8 @@ RSpec.describe Percy::Hub do
         hub.insert_job(job_data: 'process_comparison:123', build_id: 234, subscription_id: 345)
         hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
 
-        # Returns 0.5, indicating completion of all enqueuing.
-        expect(hub._enqueue_jobs).to eq(0.5)
+        # Returns 0.05, indicating completion of all enqueuing.
+        expect(hub._enqueue_jobs).to eq(0.05)
 
         expect(hub.redis.llen('jobs:runnable')).to eq(2)
       end
@@ -205,8 +205,8 @@ RSpec.describe Percy::Hub do
         hub.insert_job(job_data: 'process_comparison:130', build_id: 235, subscription_id: 346)
         hub.insert_job(job_data: 'process_comparison:131', build_id: 235, subscription_id: 346)
 
-        # Returns 0.5, indicating completion of all enqueuing.
-        expect(hub._enqueue_jobs).to eq(0.5)
+        # Returns 0.05, indicating completion of all enqueuing.
+        expect(hub._enqueue_jobs).to eq(0.05)
 
         expect(hub.redis.llen('jobs:runnable')).to eq(4)
       end
@@ -218,11 +218,11 @@ RSpec.describe Percy::Hub do
           job_data: 'process_comparison:123', build_id: 234, subscription_id: 345,
         )
         expect(hub.redis.zcard('builds:active')).to eq(1)
-        expect(hub._enqueue_jobs).to eq(0.5)
+        expect(hub._enqueue_jobs).to eq(0.05)
 
         # Check optimization: LUA script is NOT called for empty builds.
         expect(hub).to_not receive(:_enqueue_next_job)
-        expect(hub._enqueue_jobs).to eq(0.5)
+        expect(hub._enqueue_jobs).to eq(0.05)
 
         # Build is still active, because it is not expired:
         expect(hub.redis.zcard('builds:active')).to eq(1)
@@ -240,7 +240,7 @@ RSpec.describe Percy::Hub do
           inserted_at: Time.now.to_i - Percy::Hub::DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS - 1,
         )
         expect(hub.redis.zcard('builds:active')).to eq(1)
-        expect(hub._enqueue_jobs).to eq(0.5)
+        expect(hub._enqueue_jobs).to eq(0.05)
 
         # Build is cleaned up.
         expect(hub.redis.zcard('builds:active')).to eq(0)
@@ -265,8 +265,8 @@ RSpec.describe Percy::Hub do
         end
 
         it 'enforces concurrency limit default 2 per subscription' do
-          # Returns 0.5, indicating completion of all possible enqueuing.
-          expect(hub._enqueue_jobs).to eq(0.5)
+          # Returns 0.05, indicating completion of all possible enqueuing.
+          expect(hub._enqueue_jobs).to eq(0.05)
 
           # There are 2 enqueued jobs from the first subscription and 2 from the second.
           expect(hub.redis.llen('jobs:runnable')).to eq(4)
@@ -275,8 +275,8 @@ RSpec.describe Percy::Hub do
 
         it 'enforces per-subscriber lock limits if set' do
           hub.set_subscription_locks_limit(subscription_id: 345, limit: 1000)
-          # Returns 0.5, indicating completion of all possible enqueuing.
-          expect(hub._enqueue_jobs).to eq(0.5)
+          # Returns 0.05, indicating completion of all possible enqueuing.
+          expect(hub._enqueue_jobs).to eq(0.05)
           # There are 4 enqueued jobs from the first subscription and 2 from the second.
           expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(%w[6 5 4 3 2 1])
         end
@@ -286,16 +286,16 @@ RSpec.describe Percy::Hub do
 
           it 'increases all subscriber locks to minimum if set' do
             hub.set_subscription_locks_limit(subscription_id: 345, limit: 1)
-            # Returns 0.5, indicating completion of all possible enqueuing.
-            expect(hub._enqueue_jobs).to eq(0.5)
+            # Returns 0.05, indicating completion of all possible enqueuing.
+            expect(hub._enqueue_jobs).to eq(0.05)
             # There are 3 enqueued jobs from the first subscription and 3 from the second.
             expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(%w[7 6 5 3 2 1])
           end
 
           it 'enforces per-subscriber lock limits if greater than minimum' do
             hub.set_subscription_locks_limit(subscription_id: 345, limit: 1000)
-            # Returns 0.5, indicating completion of all possible enqueuing.
-            expect(hub._enqueue_jobs).to eq(0.5)
+            # Returns 0.05, indicating completion of all possible enqueuing.
+            expect(hub._enqueue_jobs).to eq(0.05)
             # There are 4 enqueued jobs from the first subscription and 3 from the second.
             expected_job_ids = %w[7 6 5 4 3 2 1]
             expect(hub.redis.lrange('jobs:runnable', 0, 100)).to eq(expected_job_ids)
@@ -318,8 +318,8 @@ RSpec.describe Percy::Hub do
         hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
         hub.insert_job(job_data: 'process_comparison:124', build_id: 234, subscription_id: 345)
 
-        # This magic "0.5" indicates the hit_lock_limit sleeptime path.
-        expect(hub._enqueue_jobs).to eq(0.5)
+        # This magic "0.05" indicates the hit_lock_limit sleeptime path.
+        expect(hub._enqueue_jobs).to eq(0.05)
         expect(hub.redis.llen('jobs:runnable')).to eq(2)
       end
     end
