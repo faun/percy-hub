@@ -758,7 +758,7 @@ RSpec.describe Percy::Hub do
     end
 
     it 'waits for timeout seconds if no jobs are available, and returns nil for no jobs' do
-      expect(hub.redis).to receive(:brpoplpush)
+      expect_any_instance_of(Redis).to receive(:brpoplpush)
         .with(
           "worker:#{worker_id}:runnable",
           "worker:#{worker_id}:running",
