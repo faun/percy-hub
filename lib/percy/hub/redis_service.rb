@@ -5,21 +5,24 @@ require 'connection_pool'
 module Percy
   class Hub
     module RedisService
+      CONNECTION_POOL_TIMEOUT = ENV.fetch('REDIS_CONNECTION_POOL_TIMEOUT', 5)
+      CONNECTION_POOL_SIZE = ENV.fetch('REDIS_CONNECTION_POOL_SIZE', 5)
       def redis_pool
-        @redis_pool ||= connection_pool
-      end
-
-      def redis
-        @redis ||= ::ConnectionPool::Wrapper.new(size: 5, timeout: 5) do
+        @redis_pool ||= ::ConnectionPool.new(
+          size: CONNECTION_POOL_SIZE,
+          timeout: CONNECTION_POOL_TIMEOUT,
+        ) do
           single_connection
         end
       end
 
-      def disconnect_redis
-        return unless @redis
-
-        @redis.close
-        @redis = nil
+      def redis
+        @redis ||= ::ConnectionPool::Wrapper.new(
+          size: CONNECTION_POOL_SIZE,
+          timeout: CONNECTION_POOL_TIMEOUT,
+        ) do
+          single_connection
+        end
       end
 
       def configure_redis_options(options = {})

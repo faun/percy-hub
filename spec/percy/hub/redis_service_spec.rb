@@ -163,12 +163,4 @@ RSpec.describe Percy::Hub::RedisService do
       end
     end
   end
-
-  describe '#disconnect_redis' do
-    it 'clears the instance variable' do
-      old_redis = hub.redis
-      hub.disconnect_redis
-      expect(hub.redis).to_not eq(old_redis)
-    end
-  end
 end
