@@ -754,7 +754,7 @@ module Percy
             conn.rpoplpush("worker:#{worker_id}:running", "worker:#{worker_id}:runnable")
           end
 
-          redis.brpoplpush(
+          conn.brpoplpush(
             "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout,
           )
         end

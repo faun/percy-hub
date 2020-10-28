@@ -1,22 +1,37 @@
 require 'redis'
 require 'percy/redis_client'
 require 'connection_pool'
+require 'digest/sha1'
 
 module Percy
   class Hub
     module RedisService
       CONNECTION_POOL_TIMEOUT = ENV.fetch('REDIS_CONNECTION_POOL_TIMEOUT', 5)
       CONNECTION_POOL_SIZE = ENV.fetch('REDIS_CONNECTION_POOL_SIZE', 5)
+      attr_reader :cache_key
+
+      # rubocop:disable Style/GlobalVars
+      $redis_connection_pool = {}
+      # rubocop:enable Style/GlobalVars
+
       def redis_pool
-        @redis_pool ||= ::ConnectionPool.new(
-          size: CONNECTION_POOL_SIZE,
-          timeout: CONNECTION_POOL_TIMEOUT,
-        ) do
-          single_connection
+        raise 'Missing redis configuration' unless @redis_options
+
+        # rubocop:disable Style/GlobalVars
+        @mutex.synchronize do
+          $redis_connection_pool[cache_key] ||= ::ConnectionPool.new(
+            size: CONNECTION_POOL_SIZE,
+            timeout: CONNECTION_POOL_TIMEOUT,
+          ) do
+            single_connection
+          end
         end
+        # rubocop:enable Style/GlobalVars
       end
 
       def redis
+        raise 'Missing redis configuration' unless @redis_options
+
         @redis ||= ::ConnectionPool::Wrapper.new(
           size: CONNECTION_POOL_SIZE,
           timeout: CONNECTION_POOL_TIMEOUT,
@@ -26,6 +41,7 @@ module Percy
       end
 
       def configure_redis_options(options = {})
+        @mutex = Mutex.new
         options.transform_keys! do |key|
           begin
             key.to_sym
@@ -54,6 +70,8 @@ module Percy
         else
           @redis_options = default_connection_options.merge(options)
         end
+        @cache_key = Digest::SHA1.hexdigest(@redis_options.to_s)
+        @redis_options
       end
 
       private def redis_connection(options)
@@ -61,15 +79,7 @@ module Percy
       end
 
       private def single_connection
-        raise 'Missing redis configuration' unless @redis_options
-
         redis_connection(@redis_options).client
-      end
-
-      private def connection_pool
-        ::ConnectionPool.new(size: 5, timeout: 5) do
-          single_connection
-        end
       end
 
       private def default_connection_options
