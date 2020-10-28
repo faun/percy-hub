@@ -788,35 +788,40 @@ RSpec.describe Percy::Hub do
       # Simulate timeout race condition (this is a real regression test): the brpoplpush command
       # is successful, but the timeout is reached at the same time and so a job is moved into
       # the :running queue but is not actually returned by wait_for_job.
-      expect(hub.redis).to receive(:brpoplpush).exactly(:once).with(
+      expect_any_instance_of(Redis).to receive(:brpoplpush).once.with(
         "worker:#{worker_id}:runnable",
         "worker:#{worker_id}:running",
         Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
       ) do
-        hub.redis_pool.with do |conn|
-          conn.brpoplpush(
-            "worker:#{worker_id}:runnable",
-            "worker:#{worker_id}:running",
-            Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
-          )
-        end
+        hub.redis.brpoplpush(
+          "worker:#{worker_id}:runnable",
+          "worker:#{worker_id}:running",
+          Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+        )
         raise Redis::TimeoutError
       end
-      expect(hub.redis).to receive(:brpoplpush).exactly(:once).with(
+      allow(hub.redis).to receive(:brpoplpush).once.with(
+        "worker:#{worker_id}:runnable",
+        "worker:#{worker_id}:running",
+        Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+      ).and_call_original
+      expect_any_instance_of(Redis).to receive(:brpoplpush).once.with(
         "worker:#{worker_id}:runnable",
         "worker:#{worker_id}:running",
         Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
       ).and_call_original
 
-      # First time: we receive nil, but the job was actually pushed underneath.
-      expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
-      expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
-      expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
+      hub.redis_pool.with do |conn|
+        # First time: we receive nil, but the job was actually pushed underneath.
+        expect(hub.wait_for_job(worker_id: worker_id)).to be_nil
+        expect(conn.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
+        expect(conn.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
 
-      # Second time: we receive the job that we should have received the first time.
-      expect(hub.wait_for_job(worker_id: worker_id)).to eq(1)
-      expect(hub.redis.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
-      expect(hub.redis.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
+        # Second time: we receive the job that we should have received the first time.
+        expect(hub.wait_for_job(worker_id: worker_id)).to eq(1)
+        expect(conn.lrange("worker:#{worker_id}:runnable", 0, 100)).to eq([])
+        expect(conn.lrange("worker:#{worker_id}:running", 0, 100)).to eq(['1'])
+      end
     end
   end
 
