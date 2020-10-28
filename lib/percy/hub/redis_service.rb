@@ -15,18 +15,6 @@ module Percy
         end
       end
 
-      private def single_connection
-        raise 'Missing redis configuration' unless @redis_options
-
-        redis_connection(@redis_options).client
-      end
-
-      private def connection_pool
-        ::ConnectionPool.new(size: 5, timeout: 5) do
-          single_connection
-        end
-      end
-
       def disconnect_redis
         return unless @redis
 
@@ -67,6 +55,18 @@ module Percy
 
       private def redis_connection(options)
         Percy::RedisClient.new(options)
+      end
+
+      private def single_connection
+        raise 'Missing redis configuration' unless @redis_options
+
+        redis_connection(@redis_options).client
+      end
+
+      private def connection_pool
+        ::ConnectionPool.new(size: 5, timeout: 5) do
+          single_connection
+        end
       end
 
       private def default_connection_options
