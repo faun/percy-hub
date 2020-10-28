@@ -785,17 +785,28 @@ RSpec.describe Percy::Hub do
       hub._enqueue_jobs
       hub._schedule_next_job
 
-      expect(hub.redis).to receive(:brpoplpush).once do
-        # Simulate timeout race condition (this is a real regression test): the brpoplpush command
-        # is successful, but the timeout is reached at the same time and so a job is moved into
-        # the :running queue but is not actually returned by wait_for_job.
-        Percy::Hub.new.redis.brpoplpush(
-          "worker:#{worker_id}:runnable",
-          "worker:#{worker_id}:running",
-          Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
-        )
+      # Simulate timeout race condition (this is a real regression test): the brpoplpush command
+      # is successful, but the timeout is reached at the same time and so a job is moved into
+      # the :running queue but is not actually returned by wait_for_job.
+      expect(hub.redis).to receive(:brpoplpush).exactly(:once).with(
+        "worker:#{worker_id}:runnable",
+        "worker:#{worker_id}:running",
+        Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+      ) do
+        hub.redis_pool.with do |conn|
+          conn.brpoplpush(
+            "worker:#{worker_id}:runnable",
+            "worker:#{worker_id}:running",
+            Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+          )
+        end
         raise Redis::TimeoutError
       end
+      expect(hub.redis).to receive(:brpoplpush).exactly(:once).with(
+        "worker:#{worker_id}:runnable",
+        "worker:#{worker_id}:running",
+        Percy::Hub::DEFAULT_TIMEOUT_SECONDS,
+      ).and_call_original
 
       # First time: we receive nil, but the job was actually pushed underneath.
       expect(hub.wait_for_job(worker_id: worker_id)).to be_nil

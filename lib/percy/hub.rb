@@ -743,7 +743,6 @@ module Percy
     # @return [nil, Integer]
     #   - `nil` when the operation timed out
     #   - the job ID otherwise
-    #   FIXME: Add support for connection pooling
     def wait_for_job(worker_id:, timeout: nil)
       timeout ||= DEFAULT_TIMEOUT_SECONDS
       begin
@@ -752,24 +751,27 @@ module Percy
         # they are picked up again. This happens in a real-world race condition: the BRPOPLPUSH
         # is successful, but the timeout is reached at the same time and a job is moved into the
         # :running queue but is not actually returned.
-        redis.llen("worker:#{worker_id}:running").times do
-          redis.rpoplpush("worker:#{worker_id}:running", "worker:#{worker_id}:runnable")
-        end
+        result = redis_pool.with do |conn|
+          conn.llen("worker:#{worker_id}:running").times do
+            conn.rpoplpush("worker:#{worker_id}:running", "worker:#{worker_id}:runnable")
+          end
 
-        result = redis.brpoplpush(
-          "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout,
-        )
+          redis.brpoplpush(
+            "worker:#{worker_id}:runnable", "worker:#{worker_id}:running", timeout,
+          )
+        end
         return unless result
 
-        runnable_jobs = redis.lrange("worker:#{worker_id}:runnable", 0, 100)
-        running_jobs = redis.lrange("worker:#{worker_id}:running", 0, 100)
         Percy.logger.debug do
-          "[worker:#{worker_id}] Popped #{result} job into running queue " \
-            "(runnable: #{runnable_jobs}, running: #{running_jobs})"
+          redis_pool.with do |conn|
+            runnable_jobs = conn.lrange("worker:#{worker_id}:runnable", 0, 100)
+            running_jobs = conn.lrange("worker:#{worker_id}:running", 0, 100)
+            "[worker:#{worker_id}] Popped #{result} job into running queue " \
+              "(runnable: #{runnable_jobs}, running: #{running_jobs})"
+          end
         end
       rescue Redis::TimeoutError
         Percy.logger.warn("[worker:#{worker_id}] Handling Redis::TimeoutError")
-        disconnect_redis
         return
       end
       Integer(result)
