@@ -252,21 +252,29 @@ module Percy
     end
 
     def set_global_locks_limit(limit:)
-      limit = Integer(limit)  # Sanity check.
-      redis.set('global:locks:limit', limit)
+      limit = Integer(limit) # Sanity check.
+      redis_pool.with do |conn|
+        conn.set('global:locks:limit', limit)
+      end
     end
 
     def get_subscription_locks_limit(subscription_id:)
-      Integer(redis.get("subscription:#{subscription_id}:locks:limit") || 2)
+      redis_pool.with do |conn|
+        Integer(conn.get("subscription:#{subscription_id}:locks:limit") || 2)
+      end
     end
 
     def get_subscription_locks_claimed(subscription_id:)
-      Integer(redis.zcard("subscription:#{subscription_id}:locks:claimed") || 0)
+      redis_pool.with do |conn|
+        Integer(conn.zcard("subscription:#{subscription_id}:locks:claimed") || 0)
+      end
     end
 
     def set_subscription_locks_limit(subscription_id:, limit:)
-      limit = Integer(limit)  # Sanity check.
-      redis.set("subscription:#{subscription_id}:locks:limit", limit)
+      limit = Integer(limit) # Sanity check.
+      redis_pool.with do |conn|
+        conn.set("subscription:#{subscription_id}:locks:limit", limit)
+      end
     end
 
     # Inserts a new job.
