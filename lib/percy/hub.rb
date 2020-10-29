@@ -393,7 +393,7 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
+              # Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
