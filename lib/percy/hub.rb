@@ -202,8 +202,8 @@ module Percy
     DEFAULT_WORKER_REAP_SECONDS = 25 # allow 2 workers heartbeat failures before reaping
 
     # The amount of time a build will remain in builds:active before being allowed to time out
-    # and being cleaned up. Default: 5 hours
-    DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 18000
+    # and being cleaned up. Default: 1 hour
+    DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS = 3600
 
     # The amount of time an orphaned lock will remain claimed before being released.
     # Default: 1 hour.
