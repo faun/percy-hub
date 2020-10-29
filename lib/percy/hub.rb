@@ -651,7 +651,11 @@ module Percy
         stats.time('hub.methods._schedule_next_job.without_timeout') do
           # Find a random idle worker to schedule the job on.
           worker_id = stats.time('hub.methods._schedule_next_job.find_random_idle_worker') do
-            redis.zrange('workers:idle', 0, -1).sample
+            num_idle_workers = redis.zcount('workers:idle', '-inf', '+inf')
+            if num_idle_workers > 0
+              idle_worker_index = rand(num_idle_workers)
+              redis.zrange('workers:idle', idle_worker_index, idle_worker_index)[0]
+            end
           end
           unless worker_id
             # There are no idle workers. This should not happen because enqueue_jobs should ensure
