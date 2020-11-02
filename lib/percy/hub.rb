@@ -394,6 +394,7 @@ module Percy
                 else
                   0
                 end
+
               case job_result
               when 1
                 # A job was successfully enqueued from this build, there may be more.
