@@ -6,8 +6,8 @@ require 'digest/sha1'
 module Percy
   class Hub
     module RedisService
-      CONNECTION_POOL_TIMEOUT = ENV.fetch('REDIS_CONNECTION_POOL_TIMEOUT', 5)
-      CONNECTION_POOL_SIZE = ENV.fetch('REDIS_CONNECTION_POOL_SIZE', 5)
+      CONNECTION_POOL_TIMEOUT = ENV.fetch('HUB_REDIS_CONNECTION_POOL_TIMEOUT', 5)
+      CONNECTION_POOL_SIZE = ENV.fetch('HUB_REDIS_CONNECTION_POOL_SIZE', 5)
       attr_reader :cache_key
 
       # rubocop:disable Style/GlobalVars
