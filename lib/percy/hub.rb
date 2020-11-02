@@ -381,7 +381,7 @@ module Percy
             # Grab the subscription associated to this build.
             subscription_id = conn.get("build:#{build_id}:subscription_id")
 
-            index = 0
+            # Enqueue as many jobs from this build as we can, until one of the exit conditions is met.
             loop do
               # Optimization: don't run the full LUA script if there are no possible jobs to enqueue.
               # We also handle returning 0 inside the script if no jobs exist in case there is a race.
