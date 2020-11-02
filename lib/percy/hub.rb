@@ -228,6 +228,8 @@ module Percy
         schedule_jobs
       when :reap_workers
         reap_workers
+      when :reap_builds
+        reap_builds
       when :reap_locks
         reap_locks
       end
@@ -363,17 +365,10 @@ module Percy
           return 2
         end
 
-        index = 0
-        loop do
-          # ZRANGE returns items ordered by score. This ensures priority for older builds.
-          build_id = redis.zrange('builds:active', index, index).first
-          build_inserted_at = redis.zscore('builds:active', build_id)
+        # ZRANGE returns items ordered by score. This ensures priority for older builds.
+        build_ids = redis.zrange('builds:active', 0, -1)
 
-          # We've iterated through all the active builds and successfully checked and/or enqueued
-          # all potential jobs for all idle workers. Sleep for a small amount of time before
-          # checking again to see if locks have been released or idle capacity is available.
-          return 0.05 unless build_id
-
+        build_ids.each do |build_id|
           # Grab the subscription associated to this build.
           subscription_id = redis.get("build:#{build_id}:subscription_id")
 
@@ -393,21 +388,18 @@ module Percy
               # A job was successfully enqueued from this build, there may be more.
               # Immediately move to the next iteration and do not sleep.
               stats.increment('hub.jobs.enqueued')
-              # Percy.logger.debug { "[hub:enqueue_jobs] Enqueued job from build #{build_id}" }
+
               next
             when 0
               # No jobs were available, move on to the next build and trigger cleanup of this build.
               stats.increment('hub.jobs.enqueuing.skipped.build_empty')
 
-              build_timeout_threshold = Time.now.to_i - DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS
-              remove_active_build(build_id: build_id) if build_inserted_at < build_timeout_threshold
-
-              index += 1
               break
             when 'hit_global_lock_limit'
               # Global concurrency limit hit. Don't attempt to schedule more work.
               # Sleep for this amount of time waiting for a worker before checking again.
               stats.increment('hub.jobs.enqueuing.skipped.hit_global_lock_limit')
+
               return 1
             when 'hit_lock_limit'
               # Subscription concurrency limit hit, move on to the next build.
@@ -415,7 +407,7 @@ module Percy
                 'hub.jobs.enqueuing.skipped.hit_lock_limit',
                 tags: [subscription_id],
               )
-              index += 1
+
               break
             when 'no_idle_worker'
               # No idle workers, sleep and restart this algorithm from the beginning. See above.
@@ -426,6 +418,11 @@ module Percy
             end
           end
         end
+
+        # We've iterated through all the active builds and successfully checked and/or enqueued
+        # all potential jobs for all idle workers. Sleep for a small amount of time before
+        # checking again to see if locks have been released or idle capacity is available.
+        return 0.05
       end
     end
 
@@ -450,6 +447,27 @@ module Percy
         ]
         _run_script('enqueue_next_job.lua', keys: keys, args: args)
       end
+    end
+
+    # Removes inactive builds from builds:active.
+    def reap_builds
+      Percy.logger.info { '[hub:reap_builds] Starting build reaper' }
+      infinite_loop_with_graceful_shutdown do
+        sleep(_reap_builds)
+      end
+      Percy.logger.info { '[hub:reap_builds] Quit' }
+    end
+
+    def _reap_builds
+      build_ids = redis.zrange('builds:active', 0, -1)
+      build_ids.each do |build_id|
+        build_inserted_at = redis.zscore('builds:active', build_id)
+        build_timeout_threshold = Time.now.to_i - DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS
+
+        remove_active_build(build_id: build_id) if build_inserted_at < build_timeout_threshold
+      end
+
+      10
     end
 
     def remove_active_build(build_id:)

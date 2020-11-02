@@ -231,24 +231,6 @@ RSpec.describe Percy::Hub do
         expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([job_id.to_s])
       end
 
-      it 'skips empty builds and cleans up empty active builds after expiration' do
-        # Insert a job and then enqueue, so we leave a build ID in builds:active.
-        job_id = hub.insert_job(
-          job_data: 'process_comparison:123',
-          build_id: 234,
-          subscription_id: 345,
-          inserted_at: Time.now.to_i - Percy::Hub::DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS - 1,
-        )
-        expect(hub.redis.zcard('builds:active')).to eq(1)
-        expect(hub._enqueue_jobs).to eq(0.05)
-
-        # Build is cleaned up.
-        expect(hub.redis.zcard('builds:active')).to eq(0)
-
-        expect(hub.redis.llen('jobs:runnable')).to eq(1)
-        expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([job_id.to_s])
-      end
-
       describe 'concurrency limits' do
         before(:each) do
           create_idle_test_workers(10)
@@ -590,6 +572,29 @@ RSpec.describe Percy::Hub do
       hub.remove_worker(worker_id: worker_id)
       expect(hub.redis.exists("worker:#{worker_id}:running")).to eq(false)
       expect(hub.redis.lrange('jobs:orphaned', 0, 10)).to eq(['1'])
+    end
+  end
+
+  describe '#_reap_builds' do
+    before(:each) { create_idle_test_workers(3) }
+
+    it 'cleans up empty active builds after expiration' do
+      # Insert a job and then enqueue, so we leave a build ID in builds:active.
+      job_id = hub.insert_job(
+        job_data: 'process_comparison:123',
+        build_id: 234,
+        subscription_id: 345,
+        inserted_at: Time.now.to_i - Percy::Hub::DEFAULT_ACTIVE_BUILD_TIMEOUT_SECONDS - 1,
+      )
+      expect(hub.redis.zcard('builds:active')).to eq(1)
+      expect(hub._enqueue_jobs).to eq(0.05)
+      expect(hub._reap_builds).to eq(10)
+
+      # Build is cleaned up.
+      expect(hub.redis.zcard('builds:active')).to eq(0)
+
+      expect(hub.redis.llen('jobs:runnable')).to eq(1)
+      expect(hub.redis.lrange('jobs:runnable', 0, 0)).to eq([job_id.to_s])
     end
   end
 

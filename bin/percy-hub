@@ -8,6 +8,7 @@ Raven.capture do
     enqueue_jobs
     schedule_jobs
     reap_workers
+    reap_builds
     reap_locks
   ].freeze
 
