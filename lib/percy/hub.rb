@@ -432,6 +432,7 @@ module Percy
         keys = [
           "build:#{build_id}:jobs:new",
           'global:locks:claimed',
+          'global:locks:limit',
           "subscription:#{subscription_id}:locks:limit",
           "subscription:#{subscription_id}:locks:claimed",
           'jobs:runnable',
@@ -439,7 +440,6 @@ module Percy
         ]
         args = [
           enqueued_at || Time.now.to_i,
-          get_global_locks_limit,
           # Default for unset subscription lock limits.
           DEFAULT_SUBSCRIPTION_LOCKS_LIMIT,
           # Global minimum for all subscription lock limits.
