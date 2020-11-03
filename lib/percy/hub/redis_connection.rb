@@ -33,7 +33,7 @@ module Percy
         @redis = nil
       end
 
-      private def default_connection_options
+      def self.default_connection_options
         {
           # These need to be longer than the longest BRPOPLPUSH timeout.
           # Defaults are 5, 5, and 1.
@@ -52,7 +52,7 @@ module Percy
         # variables: REDIS_HOST, REDIS_PORT, REDIS_DB and REDIS_PASSWORD
         #
         # Otherwise, use HUB_REDIS_URL (if defined)
-        @redis_options = default_connection_options.merge(
+        @redis_options = self.class.default_connection_options.merge(
           legacy_options(options),
         )
       end
