@@ -43,6 +43,10 @@ else
       fi
     fi
     VERSION=$1
+    sed -i "" -e "s/$GEM_VERSION/$VERSION/g" "lib/percy/hub/version.rb"
+    git add "lib/percy/hub/version.rb"
+    git commit -a -m "Release $VERSION" || true
+
     # Replace - with .pre. in version string for rubygems compatibility
     GEM_VERSION="${VERSION/-/.pre.}"
     if [[ "$GEM_VERSION" == "$VERSION" ]]; then
@@ -52,15 +56,11 @@ else
     fi
     sleep 1
 
-    sed -i "" -e "s/$GEM_VERSION/$VERSION/g" "lib/percy/hub/version.rb"
-    git add "lib/percy/hub/version.rb"
-    git commit -a -m "Release $VERSION" || true
-
     git tag -a "v$VERSION" -m "$1" || true
     git push origin "v$VERSION" || true
 
     bundle exec rake build
-    bundle exec package_cloud push percy/private-gems "$CURDIR/pkg/percy-hub-$VERSION.gem"
+    bundle exec package_cloud push percy/private-gems "$CURDIR/pkg/percy-hub-$GEM_VERSION.gem"
     open "https://github.com/percy/percy-hub/releases/new?tag=v$VERSION&title=$VERSION"
   else
     echo "Please commit your changes and try again"
