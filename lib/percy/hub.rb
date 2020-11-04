@@ -189,7 +189,7 @@ require 'forwardable'
 module Percy
   class Hub
     extend Forwardable
-    def_delegators :@redis_connection, :redis, :disconnect_redis
+    def_delegators :@redis_connection, :redis, :disconnect_redis, :redis_pool
 
     def initialize(options = {})
       @redis_connection = Percy::Hub::RedisConnection.new(options)

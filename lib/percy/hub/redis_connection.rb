@@ -1,5 +1,6 @@
 require 'redis'
 require 'percy/redis_client'
+require 'connection_pool'
 
 module Percy
   class Hub
@@ -23,6 +24,12 @@ module Percy
 
       def redis
         @redis ||= redis_connection.client
+      end
+
+      def redis_pool
+        return @redis if connection_pool?
+
+        @redis_pool ||= ::ConnectionPool.new { redis }
       end
 
       def disconnect_redis
