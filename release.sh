@@ -5,9 +5,9 @@ set -e
 cd "$(dirname "$0")" || exit 1
 CURDIR="$(pwd)"
 
-GEM_VERSION="$(grep "VERSION" lib/percy/hub/version.rb | awk -F "'" '{print $2}')"
+CURRENT_VERSION="$(grep "VERSION" lib/percy/hub/version.rb | awk -F "'" '{print $2}')"
 
-echo "Current gem version: $GEM_VERSION"
+echo "Current gem version: $CURRENT_VERSION"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage $0 <version>"
@@ -17,13 +17,17 @@ fi
 rm "$CURDIR/"percy-hub-*.gem >/dev/null 2>&1 || true
 
 delete_existing_version() {
-  git tag -d "v$1" || true
-  git push origin ":v$1" || true
-  package_cloud yank percy/private-gems "percy-hub-$1.gem" || true
+  VERSION=$1
+  # Replace - with .pre. in version string for rubygems compatibility
+  RUBYGEMS_GEM_VERSION="${VERSION/-/.pre.}"
+  git tag -d "v$VERSION" || true
+  git push origin ":v$VERSION" || true
+  package_cloud yank percy/private-gems "percy-hub-$RUBYGEMS_GEM_VERSION.gem" || true
 }
 
+VERSION=$1
 if [[ $1 == 'delete' ]]; then
-  delete_existing_version "$GEM_VERSION"
+  delete_existing_version "$VERSION"
 else
   CLEAN=$(
     git diff-index --quiet HEAD --
@@ -42,25 +46,25 @@ else
         exit 1
       fi
     fi
-    VERSION=$1
-    # Replace - with .pre. in version string for rubygems compatibility
-    GEM_VERSION="${VERSION/-/.pre.}"
-    if [[ "$GEM_VERSION" == "$VERSION" ]]; then
-      echo "Releasing $VERSION"
-    else
-      echo "Releasing $VERSION as $GEM_VERSION"
-    fi
-    sleep 1
-
-    sed -i "" -e "s/$GEM_VERSION/$VERSION/g" "lib/percy/hub/version.rb"
+    sed -i "" -e "s/$CURRENT_VERSION/$VERSION/g" "lib/percy/hub/version.rb"
     git add "lib/percy/hub/version.rb"
     git commit -a -m "Release $VERSION" || true
+
+    # Replace - with .pre. in version string for rubygems compatibility
+    RUBYGEMS_GEM_VERSION="${VERSION/-/.pre.}"
+
+    if [[ "$RUBYGEMS_GEM_VERSION" == "$VERSION" ]]; then
+      echo "Releasing $VERSION"
+    else
+      echo "Releasing $VERSION as $RUBYGEMS_GEM_VERSION"
+    fi
+    sleep 1
 
     git tag -a "v$VERSION" -m "$1" || true
     git push origin "v$VERSION" || true
 
     bundle exec rake build
-    bundle exec package_cloud push percy/private-gems "$CURDIR/pkg/percy-hub-$VERSION.gem"
+    bundle exec package_cloud push percy/private-gems "$CURDIR/pkg/percy-hub-$RUBYGEMS_GEM_VERSION.gem"
     open "https://github.com/percy/percy-hub/releases/new?tag=v$VERSION&title=$VERSION"
   else
     echo "Please commit your changes and try again"

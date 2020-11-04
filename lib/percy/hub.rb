@@ -183,14 +183,16 @@
 require 'percy/logger'
 require 'percy/stats'
 require 'percy/hub/version'
-require 'percy/hub/redis_service'
+require 'percy/hub/redis_connection'
+require 'forwardable'
 
 module Percy
   class Hub
-    include Percy::Hub::RedisService
+    extend Forwardable
+    def_delegators :@redis_connection, :redis, :disconnect_redis
 
     def initialize(options = {})
-      configure_redis_options(options)
+      @redis_connection = Percy::Hub::RedisConnection.new(options)
     end
 
     # The default blocking time for certain "hot" loops that wait on BRPOPLPUSH calls.
