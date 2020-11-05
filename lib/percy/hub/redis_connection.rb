@@ -14,7 +14,7 @@ module Percy
         end
         if options[:redis]
           @connection_pool = true
-          @redis = options[:redis]
+          @redis = options[:redis].call
         else
           @connection_pool = false
           @redis_options = configure_redis_options(options)

@@ -136,6 +136,38 @@ RSpec.describe Percy::Hub::RedisConnection do
         expect(hub.redis).to eq(redis_instance)
       end
     end
+
+    context 'when passing a proc as a redis instance' do
+      let(:hub) { Percy::Hub.new(redis: redis_conn) }
+      let(:scheme) { 'redis://' }
+      let(:host) { 'redis' }
+      let(:port) { 6379 }
+      let(:db) { 7 }
+      let(:redis_url) { "#{scheme}#{host}:#{port}/#{db}" }
+      let(:client_connection) { hub.redis.connection }
+      let(:redis_conn) do
+        proc {
+          Percy::RedisClient.new(
+            url: redis_url,
+          ).client
+        }
+      end
+
+      it 'has the correct configuration' do
+        expect(client_connection.dig(:host)).to eq(host)
+        expect(client_connection.dig(:port)).to eq(port)
+        expect(client_connection.dig(:db)).to eq(db)
+        expect(client_connection.dig(:location)).to eq("#{host}:#{port}")
+      end
+
+      it 'returns the existing redis client' do
+        expect(hub.redis).to eq(redis_instance)
+      end
+
+      it 'can call hub methods using redis client' do
+        expect(hub.get_global_locks_limit).to eq(10000)
+      end
+    end
   end
 
   describe '#disconnect_redis' do
